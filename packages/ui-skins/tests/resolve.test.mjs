@@ -166,6 +166,30 @@ test('读路径：未注册 pack/主题进 warnings，不抛错', () => {
   assert.ok(spec.warnings.some((w) => w.includes('ghost')))
 })
 
+test('跨 pack 漂移继承：静默回落 pack 默认；同层配错仍告警', () => {
+  const drift = resolveUi({
+    layers: {
+      dsh: { pack: 'aurora', layout: 'focus' },
+      session: { pack: null }, // 会话层切走 pack，低层的 focus 随字段漂移进来
+    },
+    packs,
+  })
+  // pack 被清除后 layout 无处可去
+  assert.equal(drift.layoutId, null)
+  assert.deepEqual(drift.warnings, [])
+
+  const drift2 = resolveUi({
+    layers: { dsh: { pack: 'aurora', layout: 'focus' }, session: { pack: 'other' } },
+    packs: [...packs, { id: 'other', defaultLayout: 'compact', layouts: { compact: { id: 'compact' } } }],
+  })
+  assert.equal(drift2.packId, 'other')
+  assert.equal(drift2.layoutId, 'compact') // 漂移的 focus 静默回落 other 的默认布局
+  assert.deepEqual(drift2.warnings, [])
+
+  const misconfig = resolveUi({ layers: { dsh: { pack: 'aurora', layout: 'nope' } }, packs })
+  assert.ok(misconfig.warnings.some((w) => w.includes('nope'))) // 同层配错响亮
+})
+
 test('provenance.pack 标注选择层', () => {
   const spec = resolveUi({
     layers: { dsh: { pack: 'aurora' }, workspace: { pack: 'aurora' } },

@@ -45,7 +45,7 @@ export class SlotOverrideManager {
     this.clear()
     const slots = (this.ctx as unknown as { slots: SlotsLike }).slots
     for (const [slotKey, ref] of Object.entries(spec.components)) {
-      const component = this.registry.resolve(ref)
+      const component = this.registry.resolve(ref, slotKey)
       if (!component) continue
       const dispose = slots.inject(slotKey, () =>
         slots.register(makeRegistration(slotKey, ref), makeDispatcher(component)),
@@ -70,9 +70,10 @@ function makeRegistration(slotKey: string, ref: UiComponentRef): SlotRegistratio
     name: slotKey,
     priority: ref.priority ?? DEFAULT_PRIORITY,
   }
+  // kind 形状字段只按需携带：keyed 用 key，list 用 id/order；
+  // single 是 cell=slot 本身，多带 id 会被当成 list 形状导致不渲染。
   if (ref.key !== undefined) registration.key = ref.key
   if (ref.id !== undefined) registration.id = ref.id
-  else registration.id = `${OVERRIDE_ID_PREFIX}${ref.pack}:${ref.name}` // list 型必填 id；single/keyed 忽略
   if (ref.order !== undefined) registration.order = ref.order
   return registration
 }

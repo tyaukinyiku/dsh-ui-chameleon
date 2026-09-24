@@ -24,6 +24,8 @@ const QuartzCorner: UiComponent = function QuartzCorner(props) {
 }
 
 const components: Record<string, UiComponent> = {
+  // 契约键 = 组件名（UiComponentRef.name 指向它）；同时保留 slot key 别名。
+  QuartzCorner,
   'conversation.session.header.corner': QuartzCorner,
 }
 

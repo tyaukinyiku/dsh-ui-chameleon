@@ -226,16 +226,26 @@ export function resolveUi(input: ResolveInput): UiSpec {
     if (themePick.value === undefined || themePick.value === null) {
       themeId = fallback
       provenance.theme = themeId ? 'pack-default' : 'none'
-    } else if (!pack) {
-      warnings.push(`设置了 theme(${themePick.value}) 但没有生效的 pack`)
-      provenance.theme = 'none'
+      theme = themeId && pack ? pack.themes?.[themeId] : undefined
     } else {
-      themeId = themePick.value
-      provenance.theme = themePick.level ?? 'none'
-    }
-    if (themeId && pack) {
-      theme = pack.themes?.[themeId]
-      if (!theme) warnings.push(`UI pack ${pack.id} 未提供主题: ${themeId}`)
+      const candidate = themePick.value
+      const resolved = pack?.themes?.[candidate]
+      const drift = provenance.pack !== 'none' && themePick.level !== provenance.pack
+      if (resolved) {
+        themeId = candidate
+        theme = resolved
+        provenance.theme = themePick.level ?? 'none'
+      } else if (drift || !pack) {
+        // 漂移继承（低层为旧 pack/无 pack 语境命名）或 pack 已被高层清除：静默回落
+        themeId = drift ? fallback : null
+        provenance.theme = themeId ? 'pack-default' : 'none'
+        theme = themeId && pack ? pack.themes?.[themeId] : undefined
+      } else {
+        // 同层显式配错：响亮
+        themeId = candidate
+        provenance.theme = themePick.level ?? 'none'
+        warnings.push(`UI pack ${pack.id} 未提供主题: ${candidate}`)
+      }
     }
   }
 
@@ -247,16 +257,24 @@ export function resolveUi(input: ResolveInput): UiSpec {
     if (layoutPick.value === undefined || layoutPick.value === null) {
       layoutId = fallback
       provenance.layout = layoutId ? 'pack-default' : 'none'
-    } else if (!pack) {
-      warnings.push(`设置了 layout(${layoutPick.value}) 但没有生效的 pack`)
-      provenance.layout = 'none'
+      layout = layoutId && pack ? pack.layouts?.[layoutId] : undefined
     } else {
-      layoutId = layoutPick.value
-      provenance.layout = layoutPick.level ?? 'none'
-    }
-    if (layoutId && pack) {
-      layout = pack.layouts?.[layoutId]
-      if (!layout) warnings.push(`UI pack ${pack.id} 未提供布局: ${layoutId}`)
+      const candidate = layoutPick.value
+      const resolved = pack?.layouts?.[candidate]
+      const drift = provenance.pack !== 'none' && layoutPick.level !== provenance.pack
+      if (resolved) {
+        layoutId = candidate
+        layout = resolved
+        provenance.layout = layoutPick.level ?? 'none'
+      } else if (drift || !pack) {
+        layoutId = drift ? fallback : null
+        provenance.layout = layoutId ? 'pack-default' : 'none'
+        layout = layoutId && pack ? pack.layouts?.[layoutId] : undefined
+      } else {
+        layoutId = candidate
+        provenance.layout = layoutPick.level ?? 'none'
+        warnings.push(`UI pack ${pack.id} 未提供布局: ${candidate}`)
+      }
     }
   }
 

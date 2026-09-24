@@ -1,0 +1,4 @@
+# dsh-ui-pack-manuscript 组合包层
+- insert:
+  - id: ui-pack-manuscript
+    name: dsh-ui-pack-manuscript

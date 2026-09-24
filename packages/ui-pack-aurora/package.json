@@ -1,0 +1,23 @@
+{
+  "name": "dsh-ui-pack-aurora",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Aurora UI pack：深空暗黑 + 极光渐变霓虹风（演示工作区级 UI/UX 差异）",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": {
+      "types": "./src/client.ts",
+      "default": "./lib/client.js"
+    }
+  },
+  "files": ["src", "lib/client.js", "cordis.patch.yml"],
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build:client": "node ../../scripts/build-client.mjs ."
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web" }
+  }
+}

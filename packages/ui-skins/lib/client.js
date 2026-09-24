@@ -211,7 +211,7 @@ class SlotOverrideManager {
         this.clear();
         const slots = this.ctx.slots;
         for (const [slotKey, ref] of Object.entries(spec.components)) {
-            const component = this.registry.resolve(ref);
+            const component = this.registry.resolve(ref, slotKey);
             if (!component)
                 continue;
             const dispose = slots.inject(slotKey, () => slots.register(makeRegistration(slotKey, ref), makeDispatcher(component)));
@@ -235,12 +235,12 @@ function makeRegistration(slotKey, ref) {
         name: slotKey,
         priority: ref.priority ?? DEFAULT_PRIORITY,
     };
+    // kind 形状字段只按需携带：keyed 用 key，list 用 id/order；
+    // single 是 cell=slot 本身，多带 id 会被当成 list 形状导致不渲染。
     if (ref.key !== undefined)
         registration.key = ref.key;
     if (ref.id !== undefined)
         registration.id = ref.id;
-    else
-        registration.id = `${OVERRIDE_ID_PREFIX}${ref.pack}:${ref.name}`; // list 型必填 id；single/keyed 忽略
     if (ref.order !== undefined)
         registration.order = ref.order;
     return registration;
@@ -322,9 +322,13 @@ class UiSkinsClient extends cordis_1.Service {
                 this.packs.delete(pack.id);
         };
     }
-    /** 按引用解析组件；未注册时返回 undefined 并去重告警一次。 */
-    resolve(ref) {
-        const component = this.packs.get(ref.pack)?.get(ref.name);
+    /**
+     * 按引用解析组件；未注册时返回 undefined 并去重告警一次。
+     * 兼容两种注册键：组件名（契约）与 slot key（作者习惯），后者经 slotKey 兜底。
+     */
+    resolve(ref, slotKey) {
+        const table = this.packs.get(ref.pack);
+        const component = table?.get(ref.name) ?? (slotKey ? table?.get(slotKey) : undefined);
         if (!component) {
             const key = `${ref.pack}/${ref.name}`;
             if (!this.missing.has(key)) {

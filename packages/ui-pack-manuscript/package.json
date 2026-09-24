@@ -1,0 +1,23 @@
+{
+  "name": "dsh-ui-pack-manuscript",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Manuscript UI pack：纸墨书刊风（暖纸色、衬线排版、墨线分隔）",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": {
+      "types": "./src/client.ts",
+      "default": "./lib/client.js"
+    }
+  },
+  "files": ["src", "lib/client.js", "cordis.patch.yml"],
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "build:client": "node ../../scripts/build-client.mjs ."
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web" }
+  }
+}

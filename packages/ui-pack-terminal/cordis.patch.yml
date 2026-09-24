@@ -1,0 +1,4 @@
+# dsh-ui-pack-terminal 组合包层
+- insert:
+  - id: ui-pack-terminal
+    name: dsh-ui-pack-terminal

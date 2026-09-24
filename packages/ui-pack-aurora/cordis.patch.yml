@@ -1,0 +1,4 @@
+# dsh-ui-pack-aurora 组合包层
+- insert:
+  - id: ui-pack-aurora
+    name: dsh-ui-pack-aurora

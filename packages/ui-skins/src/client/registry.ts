@@ -43,9 +43,13 @@ export class UiSkinsClient extends Service {
     }
   }
 
-  /** 按引用解析组件；未注册时返回 undefined 并去重告警一次。 */
-  resolve(ref: UiComponentRef): UiComponent | undefined {
-    const component = this.packs.get(ref.pack)?.get(ref.name)
+  /**
+   * 按引用解析组件；未注册时返回 undefined 并去重告警一次。
+   * 兼容两种注册键：组件名（契约）与 slot key（作者习惯），后者经 slotKey 兜底。
+   */
+  resolve(ref: UiComponentRef, slotKey?: string): UiComponent | undefined {
+    const table = this.packs.get(ref.pack)
+    const component = table?.get(ref.name) ?? (slotKey ? table?.get(slotKey) : undefined)
     if (!component) {
       const key = `${ref.pack}/${ref.name}`
       if (!this.missing.has(key)) {

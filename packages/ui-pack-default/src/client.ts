@@ -18,8 +18,11 @@ const WorkspaceHint: UiComponent = function WorkspaceHint() {
 }
 
 const components: Record<string, UiComponent> = {
+  // 契约键 = 组件名（UiComponentRef.name 指向它）；同时保留 slot key 别名，两种写法均可解析。
+  BrandMark,
   'conversation.hero.brand.mark': BrandMark,
   'sidebar.brand.mark': BrandMark,
+  WorkspaceHint,
   'conversation.hero.workspace': WorkspaceHint,
 }
 
