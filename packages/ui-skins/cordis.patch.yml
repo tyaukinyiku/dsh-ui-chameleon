@@ -1,0 +1,18 @@
+# dsh-ui-skins 组合包层：插入 UI/UX 装配框架。
+# 层顺序语义见《打包与安装插件》：后应用的层按行胜出，patch 替换整行 config。
+- insert:
+  - id: ui-skins
+    name: dsh-ui-skins
+    config:
+      enabled: true
+      defaultPack: default
+      defaultTheme: ''
+      defaultLayout: ''
+      defaultCss: ''
+      defaultTokens: {}
+      workspaceFileEnabled: true
+      workspaceFilePath: .dsh/ui.json
+      workspaceFilePollMs: 2000
+      observerSlot: conversation.session.header.utilities
+      observerId: ui-skins-observer
+      observerOrder: 0

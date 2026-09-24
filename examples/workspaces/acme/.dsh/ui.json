@@ -1,0 +1,12 @@
+{
+  "pack": "quartz",
+  "theme": "quartz-night",
+  "layout": "focus",
+  "tokens": {
+    "--ui-radius": "2px",
+    "--ui-gap": "4px"
+  },
+  "components": {
+    "conversation.session.header.corner": { "pack": "quartz", "name": "QuartzCorner" }
+  }
+}

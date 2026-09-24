@@ -1,0 +1,11 @@
+{
+  "pack": "default",
+  "theme": "dusk",
+  "layout": null,
+  "tokens": {
+    "--ui-accent": "#f59e0b"
+  },
+  "components": {
+    "conversation.session.header.corner": null
+  }
+}

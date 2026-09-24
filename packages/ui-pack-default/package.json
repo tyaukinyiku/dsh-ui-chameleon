@@ -1,0 +1,26 @@
+{
+  "name": "dsh-ui-pack-default",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "内置默认 UI pack：基础主题（paper/dusk）+ 经典布局（示例：主题/布局/组件三级定制）",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

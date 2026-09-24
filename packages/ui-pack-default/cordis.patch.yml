@@ -1,0 +1,4 @@
+# dsh-ui-pack-default 组合包层
+- insert:
+  - id: ui-pack-default
+    name: dsh-ui-pack-default

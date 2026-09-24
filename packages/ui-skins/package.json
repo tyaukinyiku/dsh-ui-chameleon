@@ -1,0 +1,28 @@
+{
+  "name": "dsh-ui-skins",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "dsh Web UI 装配框架：每个工作区/会话可使用独立的 UI/UX（主题/布局/组件三级定制，会话>工作区>dsh）",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  }
+}

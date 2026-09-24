@@ -1,0 +1,27 @@
+# 开发用 --patch 覆盖层：直接从仓库 checkout 加载框架 + 两个 UI pack。
+#
+# 用法（按《第一个插件》教程的本地插件流程）：
+#   pnpm dsh web --patch ./examples/cordis.patch.yml
+#
+# 注意：patch 行的 name 必须是绝对路径（loader 解析模块用）。
+# 请把下面的 /absolute/path/to/dsh-ui-skins 替换为本仓库的实际路径。
+- insert:
+  - id: ui-skins
+    name: '/absolute/path/to/dsh-ui-skins/packages/ui-skins/src/index.ts'
+    config:
+      enabled: true
+      defaultPack: default
+      defaultTheme: ''
+      defaultLayout: ''
+      defaultCss: ''
+      defaultTokens: {}
+      workspaceFileEnabled: true
+      workspaceFilePath: .dsh/ui.json
+      workspaceFilePollMs: 2000
+      observerSlot: conversation.session.header.utilities
+      observerId: ui-skins-observer
+      observerOrder: 0
+  - id: ui-pack-default
+    name: '/absolute/path/to/dsh-ui-skins/packages/ui-pack-default/src/index.ts'
+  - id: ui-pack-example
+    name: '/absolute/path/to/dsh-ui-skins/packages/ui-pack-example/src/index.ts'

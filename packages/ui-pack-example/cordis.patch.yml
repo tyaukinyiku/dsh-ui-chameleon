@@ -1,0 +1,4 @@
+# dsh-ui-pack-example 组合包层
+- insert:
+  - id: ui-pack-example
+    name: dsh-ui-pack-example

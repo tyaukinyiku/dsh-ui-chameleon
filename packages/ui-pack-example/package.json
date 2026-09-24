@@ -1,0 +1,26 @@
+{
+  "name": "dsh-ui-pack-example",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "第三方 UI pack 示例：Quartz 主题 + Focus 布局 + 组件级覆盖（教科书式三级定制）",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}
