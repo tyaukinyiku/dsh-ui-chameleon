@@ -10,21 +10,34 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Config, type Config as UiSkinsConfig } from './config.ts'
 import { UiSkins } from './service.ts'
-import { UiSkinsController } from './controller.ts'
+import { installHttpRoutes } from './http-routes.ts'
 
 export const name = 'ui-skins'
 
-/** storageDomain 是持久化绑定的必需依赖；settings / workspaceRegistry 为可选增强。 */
-export const inject = ['storageDomain']
+/** cordis 严格依赖声明：本插件直接触碰的服务必须在此声明（未声明访问会抛错）。 */
+export const inject = ['storageDomain', 'webServer']
 
 export type { UiSkinsConfig }
 export { Config }
 
 export function apply(ctx: Context, config: UiSkinsConfig): void {
   if (!config.enabled) return
-  ctx.plugin(UiSkins, config) // 提供 ctx.uiSkins
-  ctx.plugin(UiSkinsController) // 提供 ctx.uiSkinsController（生成 ctx.remote.uiSkins）
+  // 服务实例化即注册（Service 构造函数调用 ctx.reflect.provide），随本 fiber 卸载。
+  const service = new UiSkins(ctx, config) // 提供 ctx.uiSkins
+  installHttpRoutes(ctx, service) // /ui-skins/* 路由 + SSE
+
+  // 可选能力：独立子插件 + 显式注入——对应服务缺席时保持 pending，不影响主链路。
+  ctx.plugin({
+    name: 'ui-skins-workspace',
+    inject: ['workspaceRegistry'],
+    apply(context: Context): void {
+      service.attachWorkspaceLocator(
+        (context as unknown as { workspaceRegistry: Parameters<UiSkins['attachWorkspaceLocator']>[0] }).workspaceRegistry,
+      )
+    },
+  })
 }
 
 export * from './types.ts'
 export { resolveUi, normalizeLayerConfig, mergeLayerConfigs, LEVELS_LOW_TO_HIGH } from './resolve.ts'
+export { UI_SKINS_ROUTE_BASE } from './http-routes.ts'

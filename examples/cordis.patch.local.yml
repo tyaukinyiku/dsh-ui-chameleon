@@ -1,0 +1,22 @@
+# 联调用 --patch 覆盖层（已填入本机绝对路径）。
+# 用法（dsh 仓库内）：pnpm dsh web --patch /home/work/.openclaw/workspace/dsh-ui-skins/examples/cordis.patch.local.yml
+- insert:
+  - id: ui-skins
+    name: '/home/work/.openclaw/workspace/dsh-ui-skins/packages/ui-skins/src/index.ts'
+    config:
+      enabled: true
+      defaultPack: default
+      defaultTheme: ''
+      defaultLayout: ''
+      defaultCss: ''
+      defaultTokens: {}
+      workspaceFileEnabled: true
+      workspaceFilePath: .dsh/ui.json
+      workspaceFilePollMs: 2000
+      observerSlot: conversation.session.header.utilities
+      observerId: ui-skins-observer
+      observerOrder: 0
+  - id: ui-pack-default
+    name: '/home/work/.openclaw/workspace/dsh-ui-skins/packages/ui-pack-default/src/index.ts'
+  - id: ui-pack-example
+    name: '/home/work/.openclaw/workspace/dsh-ui-skins/packages/ui-pack-example/src/index.ts'

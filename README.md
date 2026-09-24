@@ -81,24 +81,23 @@ UI pack 插件（浏览器半）─ register ──────▶ ctx.uiSkinsCl
 
 | 层 | 来源 | 写入方式 |
 | --- | --- | --- |
-| **dsh** | 插件配置（cordis.yml） < 设置命名空间 `ui-skins`（用户层） | cordis.yml / 设置界面 |
-| **workspace** | `<workspace>/.dsh/ui.json`（文件层，可入库、可评审） < storage-domain `workspace_bindings`（记录层） | 直接编辑文件 / `ctx.remote.uiSkins.setLayer('workspace', id, cfg)` |
-| **session** | storage-domain `session_bindings` | `ctx.remote.uiSkins.setLayer('session', sessionId, cfg)` |
+| **dsh** | 插件配置（cordis.yml / profile patch 的行内 config） | cordis.yml / profile patch；设置页会自动把 Config schema 投影成表单（`SettingsForms`，按 entry id），改完即热替换重载 |
+| **workspace** | `<workspace>/.dsh/ui.json`（文件层，可入库、可评审） < storage-domain `workspace_bindings`（记录层） | 直接编辑文件 / `POST /ui-skins/binding` |
+| **session** | storage-domain `session_bindings` | `POST /ui-skins/binding` |
 
 写路径**响亮失败**（配置错误在写入处拒绝：结构校验 + pack/theme/layout 引用校验）；
 读路径优雅降级（未注册的 pack/主题进 `spec.warnings` 并回退）。
 
-## 4. Remote API（浏览器可用）
+## 4. host 面 API（浏览器可用，/ui-skins/*）
 
 ```ts
-ctx.remote.uiSkins.resolve({ sessionId?, workspaceId?, workspacePath? }) // → { spec, target, revision }
-ctx.remote.uiSkins.describe()          // 已注册 packs + dsh 层默认 + 观察器参数
-ctx.remote.uiSkins.getLayer(level, id) // 读绑定（'workspace' | 'session'）
-ctx.remote.uiSkins.setLayer(level, id, config | null) // 写/删绑定（null = 删除）
-ctx.remote.uiSkins.follow(signal)      // 变更流：baseline + changed（拉取模型，客户端重新 resolve）
+const api = new UiSkinsHttpApi()   // packages/ui-skins/src/client/api.ts
+await api.resolve({ sessionId?, workspaceId?, workspacePath? }) // GET  /ui-skins/resolve
+await api.describe()               // GET  /ui-skins/state
+await api.getLayer(level, id)      // GET  /ui-skins/binding
+await api.setLayer(level, id, cfg | null) // POST /ui-skins/binding（null = 删除）
+api.changes((revision) => { … })   // GET  /ui-skins/events（SSE，拉取模型：收到通知后自行 resolve）
 ```
-
-`sessionId` 缺省 workspace 信息时，host 侧经 `ctx.workspaceRegistry` 按会话归属推导。
 
 ## 5. UI pack 开发（后期扩展点）
 
@@ -179,16 +178,48 @@ npm run verify     # 类型检查（三包）+ 解析器单测
 | `workspaceFilePollMs` | `2000` | 文件层 mtime 轮询间隔 |
 | `observerSlot` / `observerId` / `observerOrder` | `conversation.session.header.utilities` / `ui-skins-observer` / `0` | 目标观察器的 slot 注册参数（slot 树演进时改配置即可） |
 
-## 8. 设计取舍与已知假设
+## 8. 设计取舍与已知假设（联调后更新）
 
-对照官方文档逐条落实，但以下点在文档未明说处做了显式假设（在 dsh 仓库内联调时按实际签名校正）：
+已对照 deepseek-harness 源码逐条校正（`dsh/` 本地检出），以下为当前实现的事实与剩余假设：
 
-1. **single/keyed slot 的遮蔽 order**：文档定义“数值越小越先渲染/遮蔽”，未公布各内建 cell 的 order。覆盖默认取 `order: -100`，可通过 `UiComponentRef.order` 逐项调整；若目标 slot 原占用者 order 更小，在引用上指定更小的值即可。
-2. **`ctx.slots.inject(key, cb)` / `register()` 的返回值**按 effect disposer 处理（与文档“注册遵循 Cordis effect 生命周期”一致）。
-3. **`ctx.remote.uiSkins`** 在本仓库为手写同形 face（`types.ts` 的 `UiSkinsRemote`）；真实构建由 Typert 从 `UiSkinsController` 生成替换。
-4. **目标（当前 session/workspace）来源**做成可插拔 seam：内置观察器从 session 作用域 slot 的 `props.sessionId` 取会话；工作区由 host 经 `ctx.workspaceRegistry` 推导。无会话场景（如 hero 页）可由任意插件调用 `SkinRuntime.setTarget()` 直接喂。
-5. **storage-domain 记录 schema** 按规范用 zod 声明；本仓库的 `types/shims.d.ts` 为离线编译占位，语义校验统一走 `resolve.ts` 的 `normalizeLayerConfig`。
-6. **会话级绑定**存 storage-domain（UI 偏好不属于会话事件日志，按存储子系统定位），不写 SessionEvent —— 对模型不可见。
+1. **slot 遮蔽语义已按真实实现对齐**（`packages/client/ui-slots` 的 `SlotCore.register`）：
+   `priority` 是 cell 遮蔽排名（升序、默认 0、最小者渲染；single = slot 本身、keyed = 同 key、list = 同 id 为一个 cell），
+   **同 cell 同 priority 会抛错**。覆盖默认取 `priority: -1`，可在 `UiComponentRef.priority` 逐项调整；
+   `UiComponentRef` 的 kind 形状字段：keyed 用 `key`、list 用 `id`/`order`。
+2. **传输面不用 Typert Remote**：strict descriptor 需要构建期生成（`dsh-typert-generator`）+
+   `api-remotes` 显式收录，树外插件无法在运行时挂载（API Gateway 文档：Client “拒绝挂载缺 strict codec 的
+   SRC descriptor”）。改用文档为功能预留的 **Feature-owned exact Fetch routes** + `host-webserver` 的
+   `register({ kind, path, handler })` seam：`/ui-skins/{state,resolve,binding,events}`（events 为 SSE）。
+3. **客户端 bundle 格式对齐 `clientConfig` 输出契约**：
+   `window.__ModuleLoader__.load({ id, factory: (require) => { …CJS… return module.exports; } })`，
+   平台模块（react 等 PLATFORM_MODULES）经 `require()` 取用。本仓库自带迷你打包器
+   `scripts/build-client.mjs`（typescript 转译 + 手写 CJS 装配）；正式发布可换用 dsh 的
+   `clientBundle()`（tsdown）以获得 sourcemap/CSS 管线。
+4. **目标来源**是可插拔 seam：内置观察器（list 型 cell，`conversation.session.header.utilities`）从
+   session 作用域 slot 的 `props.sessionId` 取会话；工作区由 host 经 `ctx.workspaceRegistry` 推导。
+   无会话场景可由任意插件调用 `SkinRuntime.setTarget()` 直接喂。
+5. **cordis 严格依赖声明**：`ctx.<service>` 未在 `inject` 声明就访问会直接抛
+   `cannot get property "…" without inject`（联调时踩过）；可选能力（workspaceRegistry 推导）
+   拆成独立子插件 + 显式注入，服务缺席时保持 pending 不影响主链路。
+6. **设置集成零代码**：`ctx.settings` 实为 `SettingsForms`（把各插件 Config schema 投影为设置表单，
+   按 profile entry id）；本插件的 `default*` 配置天然可在设置页编辑，未自建设置命名空间
+   （文档描述的 `SettingsProvider.register(ns, …)` 面在本版本源码中不存在，以源码为准）。
+7. **会话级绑定**存 storage-domain（UI 偏好不属于会话事件日志），不写 SessionEvent —— 对模型不可见。
+8. 离线类型检查仍走 `types/shims.d.ts`（真实包签名已逐条比对）；构建/运行时链接到 dsh 检出的真实包
+   （`scripts/link-dsh-deps.mjs`）。
+
+## 9. 联调结果（2026-09-24，dsh 本地检出实测）
+
+- **宿主加载**：`pnpm dsh web --patch examples/cordis.patch.local.yml` 干净启动，零 pending/失败；
+  pack 注册表实测为 `[default, quartz]`。
+- **HTTP 面**：`scripts/smoke-http.mjs` **16/16 通过**——pack 注册、工作区文件层（`.dsh/ui.json`）、
+  会话层覆盖、null 清除、provenance、写路径响亮失败、SSE 变更流。
+- **持久化**：storage-domain（json 后端）落盘 `~/.dsh/storages/ui_skins.json`。
+- **Web Client 组合**：页面 `__DSH_BOOT__` 含三个包的 entry；客户端 bundle 经官方 combo 路由
+  `/plugins/??<pkg>/client.js&rev=…` 伺服，内容为标准 `__ModuleLoader__.load({ id, factory })` 格式。
+- **离线单测**：13/13（三级解析纯函数）；三包 tsc 类型检查通过。
+- **边界**：容器内无浏览器，DOM 级（主题变量落地/组件遮蔽渲染）留待有浏览器的环境验收
+  （机制已用 Node 假 ctx 冒烟：观察器/徽标按 list cell 正确注册）。
 
 ## 需求 ↔ 实现对照
 

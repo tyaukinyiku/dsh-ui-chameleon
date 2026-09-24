@@ -71,11 +71,30 @@ declare module 'zod' {
     string(): ZodType<string>
     number(): ZodType<number>
     boolean(): ZodType<boolean>
-    record<T>(value: ZodType<T>): ZodType<Record<string, T>>
+    /** zod v4 签名：键 schema + 值 schema。 */
+    record<K extends string, T>(key: ZodType<K>, value: ZodType<T>): ZodType<Record<K, T>>
     unknown(): ZodType<unknown>
     nullable<T>(value: ZodType<T>): ZodType<T | null>
     optional<T>(value: ZodType<T>): ZodType<T | undefined>
     any(): ZodType<unknown>
+  }
+}
+
+declare module 'node:http' {
+  export interface IncomingMessage {
+    url?: string
+    method?: string
+    setEncoding(encoding: string): void
+    on(event: 'data', listener: (chunk: string) => void): unknown
+    on(event: 'end' | 'close', listener: () => void): unknown
+    on(event: 'error', listener: (error: unknown) => void): unknown
+  }
+
+  export interface ServerResponse {
+    writeHead(statusCode: number, headers?: Record<string, string>): void
+    write(chunk: string): boolean
+    end(chunk?: string): void
+    setHeader(name: string, value: string): void
   }
 }
 

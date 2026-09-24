@@ -54,13 +54,26 @@ function normalizeComponentRef(input: unknown, where: string, errors: string[]):
     pack: typeof pack === 'string' ? pack : '',
     name: typeof name === 'string' ? name : '',
   }
+  if (raw.key !== undefined) {
+    if (typeof raw.key === 'string') ref.key = raw.key
+    else errors.push(`${where}.key: 期望 string`)
+  }
+  if (raw.id !== undefined) {
+    if (typeof raw.id === 'string') ref.id = raw.id
+    else errors.push(`${where}.id: 期望 string`)
+  }
   if (raw.order !== undefined) {
     if (typeof raw.order === 'number' && Number.isFinite(raw.order)) ref.order = raw.order
     else errors.push(`${where}.order: 期望 number`)
   }
-  if (raw.entryKey !== undefined) {
-    if (typeof raw.entryKey === 'string') ref.entryKey = raw.entryKey
-    else errors.push(`${where}.entryKey: 期望 string`)
+  if (raw.priority !== undefined) {
+    if (typeof raw.priority === 'number' && Number.isFinite(raw.priority)) ref.priority = raw.priority
+    else errors.push(`${where}.priority: 期望 number`)
+  }
+  for (const key of Object.keys(raw)) {
+    if (!['pack', 'name', 'key', 'id', 'order', 'priority'].includes(key)) {
+      errors.push(`${where}: 未知字段 ${key}`)
+    }
   }
   return ref
 }

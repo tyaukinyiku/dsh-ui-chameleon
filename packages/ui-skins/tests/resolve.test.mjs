@@ -132,7 +132,7 @@ test('components：逐层覆盖，null 清除回到 dsh 原生（含 pack 自带
       session: {
         components: {
           'hero.mark': null,
-          'main.shell': { pack: 'aurora', name: 'SessionShell', order: -500 },
+          'main.shell': { pack: 'aurora', name: 'SessionShell', priority: -500 },
         },
       },
     },
@@ -140,7 +140,7 @@ test('components：逐层覆盖，null 清除回到 dsh 原生（含 pack 自带
   })
   assert.equal(spec.components['hero.mark'], undefined) // 连 pack 自带覆盖一起清除
   assert.equal(spec.components['main.shell']?.name, 'SessionShell')
-  assert.equal(spec.components['main.shell']?.order, -500)
+  assert.equal(spec.components['main.shell']?.priority, -500)
   assert.equal(spec.provenance.components['main.shell'], 'session')
 })
 
@@ -179,7 +179,7 @@ test('normalizeLayerConfig：结构校验与未知字段', () => {
     pack: 'aurora',
     theme: null,
     tokens: { '--a': '1', '--b': null },
-    components: { 'x.y': { pack: 'aurora', name: 'X', order: -1, entryKey: 'k' } },
+    components: { 'x.y': { pack: 'aurora', name: 'X', order: -1, key: 'k' } },
   })
   assert.deepEqual(ok.errors, [])
   assert.equal(ok.config.tokens['--b'], null)
@@ -189,6 +189,15 @@ test('normalizeLayerConfig：结构校验与未知字段', () => {
 
   const badRef = normalizeLayerConfig({ components: { 'x.y': { pack: 'aurora' } } })
   assert.ok(badRef.errors.some((e) => e.includes('name')))
+
+  const kindFields = normalizeLayerConfig({
+    components: { 'x.y': { pack: 'aurora', name: 'X', key: 'k', id: 'i', order: 3, priority: -2 } },
+  })
+  assert.deepEqual(kindFields.errors, [])
+  assert.equal(kindFields.config.components['x.y'].priority, -2)
+
+  const unknownField = normalizeLayerConfig({ components: { 'x.y': { pack: 'a', name: 'X', entryKey: 'k' } } })
+  assert.ok(unknownField.errors.some((e) => e.includes('entryKey')))
 })
 
 test('mergeLayerConfigs：同语义层合并（工作区层内部合成用）', () => {

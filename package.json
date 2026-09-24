@@ -9,6 +9,8 @@
   "scripts": {
     "check": "npm run check --workspaces --if-present",
     "test": "node --test packages/ui-skins/tests/*.test.mjs",
+    "build:client": "node scripts/build-client.mjs --all",
+    "link:dsh": "node scripts/link-dsh-deps.mjs",
     "verify": "npm run check && npm run test"
   },
   "devDependencies": {

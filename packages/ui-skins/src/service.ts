@@ -5,7 +5,6 @@
  *   3. 工作区/会话绑定的读写与变更通知。
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
-import { z } from 'zod'
 import type {
   BindingLevel,
   UiLayerConfig,
@@ -15,18 +14,9 @@ import type {
   UiSpecEnvelope,
   UiTarget,
 } from './types.ts'
-import { mergeLayerConfigs, normalizeLayerConfig, resolveUi } from './resolve.ts'
+import { normalizeLayerConfig, resolveUi } from './resolve.ts'
 import { BindingStore } from './store.ts'
 import { configToLayer, observerOf, type Config } from './config.ts'
-
-interface SettingsScopeLike {
-  get(): unknown
-  watch(callback: (next: unknown, prev: unknown) => void): () => void
-}
-
-interface SettingsLike {
-  register(ns: string, schema: unknown, options?: { base?: unknown; applies?: string }): SettingsScopeLike
-}
 
 interface WorkspaceLike {
   id: string
@@ -45,13 +35,18 @@ export class UiSkins extends Service {
   readonly store: BindingStore
   private readonly packs = new Map<string, UiPackDescriptor>()
   private readonly listeners = new Set<() => void>()
-  private globalScope?: SettingsScopeLike
+  private workspaceRegistry?: WorkspaceRegistryLike
   revision = 0
 
   constructor(ctx: Context, private readonly config: Config) {
     super(ctx, 'uiSkins')
     this.store = new BindingStore(ctx, config)
-    this.installSettingsLayer()
+  }
+
+  /** 可选能力挂载：会话→工作区推导。需子插件显式 inject 后调用。 */
+  attachWorkspaceLocator(registry: WorkspaceRegistryLike): void {
+    this.workspaceRegistry = registry
+    this.bump()
   }
 
   // ---------- UI pack 注册表（UI 的唯一来源：普通 dsh 插件） ----------
@@ -135,28 +130,9 @@ export class UiSkins extends Service {
 
   // ---------- 内部 ----------
 
-  /** dsh 层 = 组合配置 < settings namespace `ui-skins` 用户层。 */
+  /** dsh 层 = 插件配置（同一份配置由设置页的 Config 表单编辑，无需自建命名空间）。 */
   private baseLayer(): UiLayerConfig {
-    const composed = configToLayer(this.config)
-    const userRaw = this.globalScope?.get()
-    if (!userRaw) return composed
-    const { config: user, errors } = normalizeLayerConfig(userRaw, 'settings:ui-skins')
-    void errors // settings 的 schema 已在写路径校验；此处兜底忽略
-    return mergeLayerConfigs(composed, user)
-  }
-
-  private installSettingsLayer(): void {
-    const settings = (this.ctx as { settings?: SettingsLike }).settings
-    if (!settings?.register) return
-    try {
-      this.globalScope = settings.register('ui-skins', globalLayerSchema, {
-        base: configToLayer(this.config),
-        applies: 'live',
-      })
-      this.globalScope.watch(() => this.bump())
-    } catch (error) {
-      this.store.warnings.push(`注册 settings 命名空间 ui-skins 失败: ${String(error)}`)
-    }
+    return configToLayer(this.config)
   }
 
   /** 写路径校验：结构 + 引用（pack/theme/layout 必须已注册）。 */
@@ -185,9 +161,9 @@ export class UiSkins extends Service {
     if (problems.length > 0) throw new Error(`UI 配置无效:\n- ${problems.join('\n- ')}`)
   }
 
-  /** 目标推导：补全 workspaceId / workspacePath（经 ctx.workspaceRegistry，缺席则保持原样）。 */
+  /** 目标推导：补全 workspaceId / workspacePath（经 workspaceRegistry，未挂载则保持原样）。 */
   private locate(target: UiTarget): Required<UiTarget> & { sessionId?: string } {
-    const registry = (this.ctx as { workspaceRegistry?: WorkspaceRegistryLike }).workspaceRegistry
+    const registry = this.workspaceRegistry
     let workspaceId = target.workspaceId
     let workspacePath = target.workspacePath
     if (!workspaceId && target.sessionId && registry?.list) {
@@ -220,12 +196,5 @@ export class UiSkins extends Service {
   }
 }
 
-/** settings namespace `ui-skins` 的 zod schema（用户可编辑的 dsh 层）。 */
-const globalLayerSchema = z.object({
-  pack: z.nullable(z.string()).optional(),
-  theme: z.nullable(z.string()).optional(),
-  layout: z.nullable(z.string()).optional(),
-  tokens: z.record(z.nullable(z.string())).optional(),
-  css: z.nullable(z.string()).optional(),
-  components: z.record(z.unknown()).optional(),
-})
+// （用户可编辑的 dsh 层即上方插件 Config：dsh 的 SettingsForms 会自动把 Config schema
+// 投影为设置页表单，无需插件自建设置命名空间。）

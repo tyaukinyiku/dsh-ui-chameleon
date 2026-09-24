@@ -6,14 +6,19 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": {
+      "types": "./src/client.ts",
+      "default": "./lib/client.js"
+    }
   },
   "files": [
     "src",
+    "lib/client.js",
     "cordis.patch.yml"
   ],
   "scripts": {
-    "check": "tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json",
+    "build:client": "node ../../scripts/build-client.mjs ."
   },
   "dsh": {
     "bundle": {

@@ -1,24 +1,37 @@
 /**
  * dsh-ui-skins 共享类型 —— Node 侧与浏览器侧共用。
- * 全部 JSON 可序列化，可安全跨越 Typert Remote 传输。
+ * 全部 JSON 可序列化，可安全跨越 HTTP/Remote 传输。
  */
 
 /** 配置层级，从低到高：dsh → workspace → session。 */
 export type Level = 'dsh' | 'workspace' | 'session'
 
-/** 允许写入绑定的层级（dsh 层来自插件配置 / settings，不可经 Remote 写）。 */
+/** 允许写入绑定的层级（dsh 层来自插件配置 / settings，不可经 API 写）。 */
 export type BindingLevel = 'workspace' | 'session'
 
-/** 组件引用：指向某个 UI pack 在浏览器半注册的一个渲染单元。 */
+/**
+ * 组件引用：指向某个 UI pack 在浏览器半注册的一个渲染单元。
+ *
+ * slot 形态字段（对齐 dsh-client-ui-slots 的 register options）：
+ *   - single 型 slot：只用 priority（cell = slot 本身）；
+ *   - keyed 型 slot：必填 key（同 key + 同 priority 会抛错）；
+ *   - list 型 slot：必填 id，order 为显示顺序。
+ *   priority 是遮蔽排名：升序、默认 0、最小者渲染；与占用者 priority 相同会抛错，
+ *   所以覆盖内建 cell 时请用不同于 0 的 priority（默认取 -1）。
+ */
 export interface UiComponentRef {
   /** UI pack id（host 半与浏览器半用同一个 id）。 */
   pack: string
   /** pack 内的组件名。 */
   name: string
-  /** slot 注册 order；数值越小越先渲染/遮蔽（single 型 slot 的遮蔽优先级）。默认 -100。 */
+  /** keyed 型 slot 的派发键。 */
+  key?: string
+  /** list 型 slot 的 cell id。 */
+  id?: string
+  /** list 型显示顺序。 */
   order?: number
-  /** 目标 slot 为 keyed 型时的 entryKey。 */
-  entryKey?: string
+  /** cell 遮蔽排名（升序、最小渲染；默认 -1）。 */
+  priority?: number
 }
 
 /**
@@ -59,7 +72,7 @@ export interface UiLayout {
 
 /**
  * UI pack（host 半，数据面）：由普通 dsh 插件通过 ctx.uiSkins.registerPack() 注册。
- * 浏览器半（React 组件）由同一个包的 ./client 入口注册到 ctx.uiSkinsClient。
+ * 浏览器半（渲染组件）由同一个包的 ./client 入口注册到 ctx.uiSkinsClient。
  */
 export interface UiPackDescriptor {
   id: string
@@ -126,18 +139,18 @@ export interface UiSkinsDescribe {
   observer: { slotKey: string; id: string; order: number }
 }
 
-export type UiSkinsFollowFrame =
-  | { kind: 'baseline'; revision: number; packs: UiPackDescriptor[] }
-  | { kind: 'changed'; revision: number }
-
 /**
- * host 面 Remote 方法（真实构建里由 Typert 从 UiSkinsController 生成；
- * 这里手写一份同形 face 供浏览器半编译）。
+ * host 面 API（浏览器经 /ui-skins/* HTTP 路由调用，client/api.ts 提供实现）。
+ *
+ * 说明：dsh 的 Typert Remote 面向仓库内构建的业务包（生成的 Client 产物 + api-remotes
+ * 显式收录），树外插件无法在运行时挂载 strict descriptor；按 API Gateway 文档
+ * “Feature-owned exact Fetch routes” 与 host-webserver 的 route 注册 seam 自带传输。
  */
 export interface UiSkinsRemote {
   resolve(request: ResolveRequest): Promise<UiSpecEnvelope>
   describe(): Promise<UiSkinsDescribe>
   getLayer(level: BindingLevel, id: string): Promise<UiLayerConfig | null>
   setLayer(level: BindingLevel, id: string, config: UiLayerConfig | null): Promise<void>
-  follow(signal: AbortSignal): AsyncIterable<UiSkinsFollowFrame>
+  /** 订阅变更（每次 pack 增删 / 绑定写入 / global 层变化触发一次）。返回退订函数。 */
+  changes(onChange: (revision: number) => void): () => void
 }
