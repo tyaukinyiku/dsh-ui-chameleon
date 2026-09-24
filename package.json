@@ -6,12 +6,8 @@
   "main": "./packages/ui-skins/lib-host/index.js",
   "files": [
     "cordis.patch.yml",
-    "packages/*/package.json",
-    "packages/*/src",
-    "packages/*/lib-host",
-    "packages/*/lib",
-    "scripts/build-host.mjs",
-    "scripts/build-client.mjs"
+    "packages/**",
+    "scripts/**"
   ],
   "workspaces": [
     "packages/*"
