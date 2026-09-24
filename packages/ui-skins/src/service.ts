@@ -3,8 +3,11 @@
  *   1. UI pack 注册表（UI 来源 = 后期可开发的 dsh 插件）；
  *   2. 三级解析（会话 > 工作区 > dsh）；
  *   3. 工作区/会话绑定的读写与变更通知。
+ *
+ * 不继承 @deepseek-ai/cordis 的 Service 基类：树外安装时解析不到框架包，
+ * 服务注册改由 index.apply 里的 ctx.provide('uiSkins', …) 完成（fiber 生命周期托管）。
  */
-import { Service, type Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type {
   BindingLevel,
   UiLayerConfig,
@@ -29,17 +32,17 @@ interface WorkspaceRegistryLike {
   get(id: string): WorkspaceLike | undefined
 }
 
-export class UiSkins extends Service {
-  static inject = ['storageDomain']
-
+export class UiSkins {
   readonly store: BindingStore
   private readonly packs = new Map<string, UiPackDescriptor>()
   private readonly listeners = new Set<() => void>()
   private workspaceRegistry?: WorkspaceRegistryLike
   revision = 0
 
-  constructor(ctx: Context, private readonly config: Config) {
-    super(ctx, 'uiSkins')
+  constructor(
+    private readonly ctx: Context,
+    private readonly config: Config,
+  ) {
     this.store = new BindingStore(ctx, config)
   }
 
@@ -195,6 +198,3 @@ export class UiSkins extends Service {
     }
   }
 }
-
-// （用户可编辑的 dsh 层即上方插件 Config：dsh 的 SettingsForms 会自动把 Config schema
-// 投影为设置页表单，无需插件自建设置命名空间。）

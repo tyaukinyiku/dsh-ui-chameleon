@@ -1,8 +1,9 @@
 /**
- * 插件配置（cordis.yml 中该行的 config）。
- * Schemastery schema：加载时校验并填充默认值（官方“插件配置”约定）。
+ * 插件配置（cordis.yml / 组合包 patch 行内 config）。
+ *
+ * Config 导出为 **Standard Schema**（cordis 要求；不导出普通对象），
+ * 手写实现以避免运行时依赖 schemastery —— 树外安装时解析不到 @deepseek-ai/*。
  */
-import Schema from '@deepseek-ai/schemastery'
 import type { UiLayerConfig } from './types.ts'
 
 export interface Config {
@@ -24,20 +25,93 @@ export interface Config {
   observerOrder: number
 }
 
-export const Config: Schema<Config> = Schema.object({
-  enabled: Schema.boolean().default(true),
-  defaultPack: Schema.string().default('default'),
-  defaultTheme: Schema.string().default(''),
-  defaultLayout: Schema.string().default(''),
-  defaultCss: Schema.string().default(''),
-  defaultTokens: Schema.dict(Schema.string()).default({}),
-  workspaceFileEnabled: Schema.boolean().default(true),
-  workspaceFilePath: Schema.string().default('.dsh/ui.json'),
-  workspaceFilePollMs: Schema.number().default(2000),
-  observerSlot: Schema.string().default('conversation.session.header.utilities'),
-  observerId: Schema.string().default('ui-skins-observer'),
-  observerOrder: Schema.number().default(0),
-})
+const DEFAULTS: Config = {
+  enabled: true,
+  defaultPack: 'default',
+  defaultTheme: '',
+  defaultLayout: '',
+  defaultCss: '',
+  defaultTokens: {},
+  workspaceFileEnabled: true,
+  workspaceFilePath: '.dsh/ui.json',
+  workspaceFilePollMs: 2000,
+  observerSlot: 'conversation.session.header.utilities',
+  observerId: 'ui-skins-observer',
+  observerOrder: 0,
+}
+
+/** 填充默认值 + 字段校验；配置错误响亮抛出。 */
+export function parseConfig(input: unknown): Config {
+  const raw = (input ?? {}) as Record<string, unknown>
+  const config: Config = { ...DEFAULTS, defaultTokens: {} }
+  for (const key of Object.keys(raw)) {
+    if (!(key in DEFAULTS)) throw new Error(`ui-skins 配置未知字段: ${key}`)
+  }
+  const str = (key: keyof Config): void => {
+    const value = raw[key]
+    if (value !== undefined && typeof value !== 'string') {
+      throw new Error(`ui-skins 配置 ${key} 期望 string`)
+    }
+    if (typeof value === 'string') (config[key] as string) = value
+  }
+  str('defaultPack')
+  str('defaultTheme')
+  str('defaultLayout')
+  str('defaultCss')
+  str('workspaceFilePath')
+  str('observerSlot')
+  str('observerId')
+  const num = (key: keyof Config): void => {
+    const value = raw[key]
+    if (value !== undefined && typeof value !== 'number') {
+      throw new Error(`ui-skins 配置 ${key} 期望 number`)
+    }
+    if (typeof value === 'number') (config[key] as number) = value
+  }
+  num('workspaceFilePollMs')
+  num('observerOrder')
+  const bool = (key: keyof Config): void => {
+    const value = raw[key]
+    if (value !== undefined && typeof value !== 'boolean') {
+      throw new Error(`ui-skins 配置 ${key} 期望 boolean`)
+    }
+    if (typeof value === 'boolean') (config[key] as boolean) = value
+  }
+  bool('enabled')
+  bool('workspaceFileEnabled')
+  if (raw.defaultTokens !== undefined) {
+    const tokens = raw.defaultTokens
+    if (typeof tokens !== 'object' || tokens === null || Array.isArray(tokens)) {
+      throw new Error('ui-skins 配置 defaultTokens 期望对象')
+    }
+    for (const [key, value] of Object.entries(tokens)) {
+      if (typeof value !== 'string') throw new Error(`ui-skins 配置 defaultTokens.${key} 期望 string`)
+      config.defaultTokens[key] = value
+    }
+  }
+  return config
+}
+
+/** Standard Schema（https://standardschema.dev）形态的配置校验器。 */
+export const Config: {
+  '~standard': {
+    vendor: string
+    version: 1
+    validate(value: unknown): { value: Config } | { issues: Array<{ message: string }> }
+  }
+} = {
+  '~standard': {
+    vendor: 'dsh-ui-chameleon',
+    version: 1,
+    validate(value: unknown) {
+      try {
+        return { value: parseConfig(value) }
+      } catch (error) {
+        return { issues: [{ message: String(error) }] }
+      }
+    },
+  },
+}
 
 /** dsh 层（组合层）的 UiLayerConfig 形态。 */
 export function configToLayer(config: Config): UiLayerConfig {
@@ -50,7 +124,7 @@ export function configToLayer(config: Config): UiLayerConfig {
   }
 }
 
-/** 客户端运行时需要的配置面（经 Remote.describe() 下发）。 */
+/** 客户端运行时需要的配置面（经 /ui-skins/state 下发）。 */
 export function observerOf(config: Config): { slotKey: string; id: string; order: number } {
   return { slotKey: config.observerSlot, id: config.observerId, order: config.observerOrder }
 }

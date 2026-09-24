@@ -1,17 +1,46 @@
 {
-  "name": "dsh-ui-skins-workspace",
-  "private": true,
+  "name": "dsh-ui-chameleon",
   "version": "0.1.0",
   "type": "module",
+  "description": "dsh Web UI 装配框架（组合包）：每个工作区/会话可使用独立 UI/UX，主题/布局/组件三级定制，会话>工作区>dsh",
+  "main": "./packages/ui-skins/lib-host/index.js",
+  "files": [
+    "cordis.patch.yml",
+    "packages/*/package.json",
+    "packages/*/src",
+    "packages/*/lib-host",
+    "packages/*/lib",
+    "scripts/build-host.mjs",
+    "scripts/build-client.mjs"
+  ],
   "workspaces": [
     "packages/*"
   ],
+  "exports": {
+    ".": "./packages/ui-skins/lib-host/index.js",
+    "./ui-skins": "./packages/ui-skins/lib-host/index.js",
+    "./ui-pack-default": "./packages/ui-pack-default/lib-host/index.js",
+    "./ui-pack-example": "./packages/ui-pack-example/lib-host/index.js",
+    "./ui-pack-aurora": "./packages/ui-pack-aurora/lib-host/index.js",
+    "./ui-pack-manuscript": "./packages/ui-pack-manuscript/lib-host/index.js",
+    "./ui-pack-terminal": "./packages/ui-pack-terminal/lib-host/index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
+    "prepare": "node scripts/build-host.mjs --all && node scripts/build-client.mjs --all",
     "check": "npm run check --workspaces --if-present",
     "test": "node --test packages/ui-skins/tests/*.test.mjs",
+    "build:host": "node scripts/build-host.mjs --all",
     "build:client": "node scripts/build-client.mjs --all",
     "link:dsh": "node scripts/link-dsh-deps.mjs",
     "verify": "npm run check && npm run test"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

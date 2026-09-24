@@ -1,0 +1,29 @@
+# dsh-ui-chameleon 组合包层：安装进 profile 后按序插入以下插件行。
+# 行以包名引用安装代码（Node 从 profile 解析），用户可在自己的
+# profile cordis.patch.yml 里按 id 覆盖任意行的完整 config。
+- insert:
+  - id: ui-skins
+    name: 'dsh-ui-chameleon/ui-skins'
+    config:
+      enabled: true
+      defaultPack: default
+      defaultTheme: ''
+      defaultLayout: ''
+      defaultCss: ''
+      defaultTokens: {}
+      workspaceFileEnabled: true
+      workspaceFilePath: .dsh/ui.json
+      workspaceFilePollMs: 2000
+      observerSlot: conversation.session.header.utilities
+      observerId: ui-skins-observer
+      observerOrder: 0
+  - id: ui-pack-default
+    name: 'dsh-ui-chameleon/ui-pack-default'
+  - id: ui-pack-example
+    name: 'dsh-ui-chameleon/ui-pack-example'
+  - id: ui-pack-aurora
+    name: 'dsh-ui-chameleon/ui-pack-aurora'
+  - id: ui-pack-manuscript
+    name: 'dsh-ui-chameleon/ui-pack-manuscript'
+  - id: ui-pack-terminal
+    name: 'dsh-ui-chameleon/ui-pack-terminal'

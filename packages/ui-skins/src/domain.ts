@@ -5,11 +5,11 @@
  *   workspace_bindings —— 工作区级绑定（key: WorkspaceId）
  *   session_bindings   —— 会话级绑定（key: SessionId）
  *
- * 记录 schema 用 zod 声明（DomainSpec 要求 zod）；语义校验统一走 resolve.ts 的
- * normalizeLayerConfig（写路径拒绝、读路径告警），这里的 schema 负责存储边界的形状校验。
+ * DomainSpec 以字面量直构（domainTable 即 { valueSchema }）——避免运行时依赖
+ * @deepseek-ai/dsh-storage-domain（树外安装解析不到）；zod 是真实 npm 依赖。
+ * 语义校验统一走 resolve.ts 的 normalizeLayerConfig（写路径拒绝、读路径告警）。
  */
 import { z } from 'zod'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { UiLayerConfig } from './types.ts'
 
 const layerConfigSchema = z.object({
@@ -23,12 +23,12 @@ const layerConfigSchema = z.object({
 
 export const UI_SKINS_DOMAIN_NAME = 'ui_skins'
 
-export const uiSkinsDomain = defineDomain({
+export const uiSkinsDomain = {
   name: UI_SKINS_DOMAIN_NAME,
   version: 1,
-  layout: 'single',
+  layout: 'single' as const,
   tables: {
-    workspace_bindings: domainTable<string, UiLayerConfig>(layerConfigSchema),
-    session_bindings: domainTable<string, UiLayerConfig>(layerConfigSchema),
+    workspace_bindings: { valueSchema: layerConfigSchema },
+    session_bindings: { valueSchema: layerConfigSchema },
   },
-})
+}

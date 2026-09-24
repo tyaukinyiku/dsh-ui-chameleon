@@ -1,11 +1,13 @@
 /**
- * dsh-ui-skins —— 工作区/会话级 UI/UX 装配框架（host 入口）。
+ * dsh-ui-chameleon 框架 host 入口 —— 工作区/会话级 UI/UX 装配框架。
  *
  * 它是机制/框架而非固定界面：
  *   - UI 来源 = 后期可开发的 dsh 插件（通过 ctx.uiSkins.registerPack 注册主题/布局，
  *     通过同一个包的 ./client 入口注册组件）；
  *   - 每个工作区/会话可绑定不同的 UI/UX：解析顺序 会话 > 工作区 > dsh；
  *   - 定制粒度：主题（token/CSS）· 布局（结构级）· 组件（slot 级覆盖）。
+ *
+ * 运行时零 @deepseek-ai/* 依赖（仅 import type，转译即擦除）——树外 git 安装可直接解析。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Config, type Config as UiSkinsConfig } from './config.ts'
@@ -22,11 +24,12 @@ export { Config }
 
 export function apply(ctx: Context, config: UiSkinsConfig): void {
   if (!config.enabled) return
-  // 服务实例化即注册（Service 构造函数调用 ctx.reflect.provide），随本 fiber 卸载。
-  const service = new UiSkins(ctx, config) // 提供 ctx.uiSkins
+  const service = new UiSkins(ctx, config)
+  // 服务注册：ctx.provide 由当前 fiber 托管，卸载自动清理（免 Service 基类依赖）。
+  ctx.provide('uiSkins', service)
   installHttpRoutes(ctx, service) // /ui-skins/* 路由 + SSE
 
-  // 可选能力：独立子插件 + 显式注入——对应服务缺席时保持 pending，不影响主链路。
+  // 可选能力：独立子插件 + 显式注入——workspaceRegistry 缺席时保持 pending，不影响主链路。
   ctx.plugin({
     name: 'ui-skins-workspace',
     inject: ['workspaceRegistry'],
