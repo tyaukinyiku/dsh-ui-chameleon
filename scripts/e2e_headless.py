@@ -73,8 +73,10 @@ def main():
         body = page.content()
         check("页面加载（SPA）", len(body) > 20000, f"{len(body)} bytes")
         check("__DSH_BOOT__ 含插件 entry", "dsh-ui-skins" in body)
-        boot = page.evaluate("() => !!window.__DSH_BOOT__?.entries?.some(e => e.id === 'dsh-ui-skins')")
-        check("boot graph 有 dsh-ui-skins 行", bool(boot))
+        boot = page.evaluate(
+            "() => !!window.__DSH_BOOT__?.entries?.some(e => ['dsh-ui-chameleon', 'dsh-ui-skins'].includes(e.id))"
+        )
+        check("boot graph 有插件行（聚合/直载）", bool(boot))
         for name in ("Continue", "Configure later"):  # 引导弹窗逐个独立关闭（存在的才点）
             try:
                 btn = page.get_by_role("button", name=name)

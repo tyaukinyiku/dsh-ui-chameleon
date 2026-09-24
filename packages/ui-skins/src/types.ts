@@ -149,6 +149,7 @@ export interface UiSkinsDescribe {
 export interface UiSkinsRemote {
   resolve(request: ResolveRequest): Promise<UiSpecEnvelope>
   describe(): Promise<UiSkinsDescribe>
+  listWorkspaces(): Promise<Array<{ id: string; path: string }>>
   getLayer(level: BindingLevel, id: string): Promise<UiLayerConfig | null>
   setLayer(level: BindingLevel, id: string, config: UiLayerConfig | null): Promise<void>
   /** 订阅变更（每次 pack 增删 / 绑定写入 / global 层变化触发一次）。返回退订函数。 */

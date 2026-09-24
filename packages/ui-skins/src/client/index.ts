@@ -15,6 +15,7 @@ import { UiSkinsClient, type UiComponent } from './registry.ts'
 import { SkinRuntime } from './runtime.ts'
 import { UiSkinsHttpApi } from './api.ts'
 import { makeBadge, makeObserver } from './observer.ts'
+import { makePickerButton } from './picker.ts'
 
 export type { UiClientPack, UiComponent, UiRenderable } from './registry.ts'
 export { UiSkinsClient } from './registry.ts'
@@ -78,6 +79,28 @@ export function apply(ctx: Context, config?: Partial<ClientConfig>): void {
         slots.register({ name: 'conversation.session.header.actions', id: 'ui-skins-badge', order: 0 }, badge),
       ),
     'ui-skins: skin badge',
+  )
+
+  // 🎨 皮肤按钮（会话头部）：点击 → 皮肤选择器（可配到当前会话/工作区）。
+  const pickerBtn = makePickerButton(
+    (props) => ({ api, sessionId: (props as { sessionId?: string }).sessionId }),
+  )
+  ctx.effect(
+    () =>
+      slots.inject('conversation.session.header.actions', () =>
+        slots.register({ name: 'conversation.session.header.actions', id: 'ui-skins-picker', order: 1 }, pickerBtn),
+      ),
+    'ui-skins: picker button',
+  )
+
+  // 🎨 侧栏脚部调色板按钮（root 级）：无会话时也能配置工作区皮肤。
+  const pickerBtnGlobal = makePickerButton({ api }, '🎨', '配置 UI/UX（工作区）')
+  ctx.effect(
+    () =>
+      slots.inject('sidebar.footer.action', () =>
+        slots.register({ name: 'sidebar.footer.action', id: 'ui-skins-picker-global', order: 0 }, pickerBtnGlobal),
+      ),
+    'ui-skins: picker button (global)',
   )
 
   ctx.effect(() => {

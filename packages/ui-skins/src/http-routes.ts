@@ -8,6 +8,7 @@
  *
  * 路由表：
  *   GET  /ui-skins/state              → UiSkinsDescribe
+ *   GET  /ui-skins/workspaces         → 工作区列表 [{id, path}]（选择器的目标下拉）
  *   GET  /ui-skins/resolve?…          → UiSpecEnvelope（sessionId/workspaceId/workspacePath）
  *   GET  /ui-skins/binding?level=&id= → UiLayerConfig | null
  *   POST /ui-skins/binding            → body { level, id, config | null } → 204（400 携带错误）
@@ -65,6 +66,10 @@ async function handle(service: UiSkins, req: IncomingMessage, res: ServerRespons
     if (workspaceId) target.workspaceId = workspaceId
     if (workspacePath) target.workspacePath = workspacePath
     sendJson(res, 200, await service.resolve(target))
+    return
+  }
+  if (method === 'GET' && path === '/workspaces') {
+    sendJson(res, 200, service.listWorkspaces())
     return
   }
   if (method === 'GET' && path === '/binding') {

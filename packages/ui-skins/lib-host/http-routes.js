@@ -36,6 +36,10 @@ async function handle(service, req, res) {
         sendJson(res, 200, await service.resolve(target));
         return;
     }
+    if (method === 'GET' && path === '/workspaces') {
+        sendJson(res, 200, service.listWorkspaces());
+        return;
+    }
     if (method === 'GET' && path === '/binding') {
         const level = url.searchParams.get('level');
         const id = url.searchParams.get('id');

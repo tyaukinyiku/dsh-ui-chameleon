@@ -36,7 +36,7 @@ function listTargets() {
 }
 
 function findEntry(pkgDir) {
-  for (const candidate of ['src/client/index.ts', 'src/client.ts']) {
+  for (const candidate of ['src/client-combined.ts', 'src/client/index.ts', 'src/client.ts']) {
     if (existsSync(join(pkgDir, candidate))) return candidate
   }
   return null
@@ -134,7 +134,7 @@ return module.exports; } });
 }
 
 const args = process.argv.slice(2)
-const targets = args.length === 0 || args[0] === '--all' ? listTargets() : args
+const targets = args.length === 0 || args[0] === '--all' ? [...listTargets(), join(ROOT, '..')] : args
 let built = 0
 for (const target of targets) {
   if (buildPackage(target)) built += 1

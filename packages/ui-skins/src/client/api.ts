@@ -26,6 +26,10 @@ export class UiSkinsHttpApi implements UiSkinsRemote {
     return this.json('GET', '/state')
   }
 
+  async listWorkspaces(): Promise<Array<{ id: string; path: string }>> {
+    return this.json('GET', '/workspaces')
+  }
+
   async getLayer(level: BindingLevel, id: string): Promise<UiLayerConfig | null> {
     const query = new URLSearchParams({ level, id })
     return this.json('GET', `/binding?${query.toString()}`)

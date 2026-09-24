@@ -3,17 +3,24 @@
   "version": "0.1.0",
   "type": "module",
   "description": "dsh Web UI 装配框架（组合包）：每个工作区/会话可使用独立 UI/UX，主题/布局/组件三级定制，会话>工作区>dsh",
-  "main": "./packages/ui-skins/lib-host/index.js",
+  "main": "./lib-host/index.js",
   "files": [
     "cordis.patch.yml",
     "packages/**",
-    "scripts/**"
+    "scripts/**",
+    "src/**",
+    "lib-host/**",
+    "lib/**"
   ],
   "workspaces": [
     "packages/*"
   ],
   "exports": {
-    ".": "./packages/ui-skins/lib-host/index.js",
+    ".": "./lib-host/index.js",
+    "./client": {
+      "types": "./src/client-combined.ts",
+      "default": "./lib/client.js"
+    },
     "./ui-skins": "./packages/ui-skins/lib-host/index.js",
     "./ui-pack-default": "./packages/ui-pack-default/lib-host/index.js",
     "./ui-pack-example": "./packages/ui-pack-example/lib-host/index.js",
@@ -24,6 +31,10 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
     }
   },
   "scripts": {

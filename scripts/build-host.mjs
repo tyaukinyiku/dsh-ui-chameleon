@@ -32,7 +32,7 @@ function walk(dir, out = []) {
 function buildPackage(pkgDir) {
   const srcDir = join(pkgDir, 'src')
   if (!existsSync(srcDir)) return false
-  const files = walk(srcDir).filter((f) => !f.includes(`${'src'}/client`))
+  const files = walk(srcDir).filter((f) => !f.includes('src/client') && !f.endsWith('client-combined.ts'))
   if (files.length === 0) return false
   for (const file of files) {
     const rel = relative(srcDir, file)
@@ -58,9 +58,12 @@ function buildPackage(pkgDir) {
 
 const args = process.argv.slice(2)
 const targets = args.length === 0 || args[0] === '--all'
-  ? readdirSync(PACKAGES, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && statSync(join(PACKAGES, e.name)).isDirectory())
-      .map((e) => join(PACKAGES, e.name))
+  ? [
+      ...readdirSync(PACKAGES, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && statSync(join(PACKAGES, e.name)).isDirectory())
+        .map((e) => join(PACKAGES, e.name)),
+      ROOT, // 聚合入口（安装态唯一插件面）最后构建，依赖各包 lib-host
+    ]
   : args
 let built = 0
 for (const target of targets) if (buildPackage(target)) built += 1

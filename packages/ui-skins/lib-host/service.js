@@ -92,6 +92,15 @@ export class UiSkins {
         this.listeners.add(callback);
         return () => this.listeners.delete(callback);
     }
+    /** 工作区列表（皮肤选择器的工作区目标下拉）；workspaceRegistry 未挂载返回空。 */
+    listWorkspaces() {
+        try {
+            return (this.workspaceRegistry?.list() ?? []).map((w) => ({ id: w.id, path: w.path }));
+        }
+        catch {
+            return [];
+        }
+    }
     // ---------- 内部 ----------
     /** dsh 层 = 插件配置（同一份配置由设置页的 Config 表单编辑，无需自建命名空间）。 */
     baseLayer() {

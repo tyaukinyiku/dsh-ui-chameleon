@@ -66,7 +66,23 @@ npm run build:client
 持久化：storage-domain 领域 `ui_skins`（`workspace_bindings`/`session_bindings` 表）。
 工作区另有文件层 `<workspace>/.dsh/ui.json`（可入库、可评审），优先级低于存储记录层。
 
-## 4. 测试体系（"测"）
+## 4. 使用方式：内置配置界面（🎨 皮肤选择器）
+
+安装后无需手改 JSON——界面上有两个入口：
+
+- **会话头部**的『🎨 皮肤』按钮（徽标旁，实时显示当前皮肤）；
+- **侧栏脚部**的『🎨』调色板按钮（无会话时也可用）。
+
+点击弹出**皮肤选择器**：
+- 卡片墙列出全部已集成的 UI pack（色板预览 + 说明 + 当前生效标记）；
+- 选 pack 后挑主题/布局（含『(pack 默认)』= 清除语义）；
+- 目标二选一：**当前会话** / **工作区**（下拉可换任意已注册工作区）；
+- 『应用』即时生效（SSE 推送刷新），『清除本层覆盖』回落下层继承。
+
+选择器数据面：`GET /ui-skins/state`（packs）、`GET /ui-skins/workspaces`（工作区下拉）、
+写入走 `POST /ui-skins/binding`；端到端验收见 `scripts/e2e_picker.py`（12 项）。
+
+## 5. 测试体系（"测"）
 
 | 层 | 命令 | 覆盖 |
 | --- | --- | --- |
@@ -75,6 +91,7 @@ npm run build:client
 | **HTTP 冒烟** | `node scripts/smoke-http.mjs [base]` | /ui-skins/* 面 16 项：pack 注册、工作区文件层、会话层覆盖、null 清除、provenance、写路径拒绝、SSE |
 | **无头验收** | `python3 scripts/e2e_headless.py [base]` | 真实 Chromium 完整用户流 25 项：加载/三级继承 DOM 落地/组件渲染/零报错 + 四层截图 |
 | **千面演示** | `python3 scripts/demo_workspaces.py [base]` | 3 工作区 × 5 断言 + 零报错 = 16 项：pack/theme/字体/品牌组件/角标归属 + 整页截图 |
+| **选择器验收** | `python3 scripts/e2e_picker.py [base]` | 12 项：🎨 按钮→选皮肤→应用到会话/工作区→清除回落，全程 UI 操作 |
 
 无头系列依赖 playwright + Chromium（`CHROME` 常量指向本机二进制）。
 
@@ -86,6 +103,7 @@ npm test                      14/14
 smoke-http.mjs                16/16
 e2e_headless.py               25/25（零 pageerror、零我方 console 输出）
 demo_workspaces.py            16/16（aurora / manuscript / terminal 三套 UI 各自命中）
+e2e_picker.py                 12/12（皮肤选择器全流程）
 ```
 
 ## 5. 集成坑位备忘（血泪清单）
@@ -95,5 +113,8 @@ demo_workspaces.py            16/16（aurora / manuscript / terminal 三套 UI �
 3. **反代暴露要改写 Host/Origin/Referer** 为 canonical authority，否则 `/api` 信任围栏 403 → remote.mux WS 断 → 整个 UI 瘫；WS 升级必须保留 `Connection/Upgrade` 头。
 4. **single 型注册别带 `id`**、list 必带、keyed 必带 `key`（见 extension-guide §4）。
 5. **组件注册键**：引用方 `name` 必须能在 pack 组件表解析（组件名键或 slot key 别名）。
+6. **安装态的插件面是裸包名**：client 模块扫描按 manifest.name 归属（子路径行会被判非 client 行）→
+   根包聚合入口（src/index.ts + src/client-combined.ts）作为唯一点火点，内部 ctx.plugin 挂载全模块。
+7. **注释里别写 `packages/*/src`**：`*/` 会提前终止块注释（transpileModule 容错不报，产物语法断）。
 6. **无头 UI 自动化**：工作区选择器是 `role=menu`（用 `menuitem` 点，点文本 span 会假成功）；
    "Choose workspace" 只在首屏/新会话态；发消息无 API key 会报 `This turn failed`（不影响 UI 断言）。
