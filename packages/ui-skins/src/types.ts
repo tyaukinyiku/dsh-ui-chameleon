@@ -76,7 +76,7 @@ export interface UiLayout {
  */
 /** 外部包配置项（适配器输入；JSON 可序列化）。 */
 export interface ExternalPackEntry {
-  /** 外部皮肤单元来源：包名（profile node_modules 解析）或目录路径。 */
+  /** 来源：包名（profile node_modules 解析）、目录路径、或 `market:<skinId>`（dsh-market.com 市场皮肤）。 */
   source: string
   /** 可选：覆盖生成的 pack id（默认 ext-<skin.id>）。 */
   id?: string
@@ -84,6 +84,10 @@ export interface ExternalPackEntry {
   enabled?: boolean
   /** 可选：显式 CSS 资产（相对单元根）；缺省时自动发现/提取。 */
   cssFiles?: string[]
+  /** 可选：卡片标题覆盖（市场皮肤无元数据端点时用）。 */
+  title?: string
+  /** 可选：卡片简介覆盖。 */
+  description?: string
 }
 
 /** 外部来源标注（适配器生成；调试/设置界面用）。 */
@@ -92,7 +96,7 @@ export interface UiExternalSource {
   source: string
   originalId: string
   package?: string
-  cssOrigin?: 'files' | 'discover' | 'extract' | 'none'
+  cssOrigin?: 'files' | 'discover' | 'extract' | 'market' | 'none'
 }
 
 export interface UiPackDescriptor {
@@ -109,7 +113,7 @@ export interface UiPackDescriptor {
   layouts?: Record<string, UiLayout>
   defaultTheme?: string
   defaultLayout?: string
-  /** 外部皮肤：body 属性激活标记（如 data-dsh-aurora）；激活 pack 时由 runtime 设置。 */
+  /** 外部皮肤：激活标记 `attr` 或 `attr=value`（如 data-dsh-skin=verdandi）；激活 pack 时由 runtime 设置。 */
   bodyAttr?: string
   /** 预览图 URL（外部皮肤卡用；light/dark）。 */
   preview?: { light?: string; dark?: string }

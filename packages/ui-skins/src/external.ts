@@ -17,6 +17,8 @@ export interface ExternalPackAdapted {
   /** 资产白名单：rel（URL 路径） -> 绝对路径（asset 路由按此服务，防越界）。 */
   assets: Map<string, string>
   warnings: string[]
+  /** false = 未成功适配（来源缺失/拉取失败），不注册 pack 仅留诊断。 */
+  ok: boolean
 }
 
 export const EXTERNAL_ROUTE_PREFIX = '/ui-skins/external'
@@ -222,5 +224,100 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
     package: typeof pkgName === 'string' ? pkgName : typeof skin.package === 'string' ? skin.package : undefined,
     cssOrigin,
   }
-  return { pack, root, assets, warnings }
+  return { pack, root, assets, warnings, ok: true }
+}
+
+
+// ---------------------------------------------------------------------------
+// dsh-market.com 市场源（x-org.linxin666.skin-center/v1alpha1 v2 资产契约）
+//   GET /api/skin-center/v2/skins/{id}/stylesheet | patches   → CSS 文本
+//   作用域 html[data-dsh-skin="<id>"]（loader-owned，由 bodyAttr 激活机制设置）
+//   hooks.mjs 为动态装饰（JS）——安全边界内不执行；assets/* 需运行时联网。
+// ---------------------------------------------------------------------------
+
+export const MARKET_ASSET_BASE = 'https://dsh-market.com/api/skin-center/v2/skins'
+
+/** 解析市场来源：`market:<skinId>` 或 dsh-market.com URL（/skins/<id>、?skin=<id>）。 */
+export function marketSkinId(source: string): string | null {
+  if (source.startsWith('market:')) return source.slice('market:'.length) || null
+  if (!/^https?:\/\/(www\.)?dsh-market\.com\//.test(source)) return null
+  try {
+    const url = new URL(source)
+    const q = url.searchParams.get('skin')
+    if (q) return q
+    const m = url.pathname.match(/\/skins\/([^/]+)/)
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
+/** 把 CSS 里相对 url(...) 重写为市场资产绝对地址（市场管线不重写相对路径）。 */
+export function rewriteCssUrls(css: string, assetBase: string): string {
+  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (match, quote, u) => {
+    const target = String(u)
+    if (/^(data:|https?:|\/\/|#)/.test(target)) return match
+    return `url(${quote}${assetBase.replace(/\/$/, '')}/${target.replace(/^\.\//, '')}${quote})`
+  })
+}
+
+/** 市场皮肤 → UiPackDescriptor（样式层适配；bodyAttr 形如 `data-dsh-skin=<id>`）。 */
+export async function adaptMarketSkin(skinId: string, entry: ExternalPackEntry): Promise<ExternalPackAdapted> {
+  const warnings: string[] = []
+  const id = entry.id || `ext-${skinId}`
+  const assetBase = `${MARKET_ASSET_BASE}/${encodeURIComponent(skinId)}`
+  const cssParts: string[] = []
+  let cssOrigin: 'market' | 'none' = 'none'
+  for (const asset of ['stylesheet', 'patches']) {
+    try {
+      const res = await fetch(`${assetBase}/${asset}`)
+      if (!res.ok) {
+        warnings.push(`市场资产 ${asset} 拉取失败: HTTP ${res.status}`)
+        continue
+      }
+      const text = await res.text()
+      if (text.trim()) {
+        // `:root`(0,1,0) 会被 dsh 官方同名 token 的后注入定义压过——市场皮肤多为
+        // 官方 token 重映射，必须以更高特异度(0,1,1)锚定在 pack 激活属性上才能赢下层叠。
+        const scoped = text.replaceAll(':root', `html[data-ui-pack="${id}"]`)
+        cssParts.push(rewriteCssUrls(scoped, assetBase))
+        cssOrigin = 'market'
+      }
+    } catch (error) {
+      warnings.push(`市场资产 ${asset} 拉取异常: ${String(error)}`)
+    }
+  }
+  const pack: UiPackDescriptor = {
+    id,
+    title: entry.title || skinId,
+    description: entry.description || `dsh-market.com 市场皮肤（${skinId}）`,
+    bodyAttr: `data-dsh-skin=${skinId}`,
+  }
+  if (cssParts.length > 0) pack.baseCss = cssParts.join('\n')
+  pack.external = { kind: 'external-skin', source: entry.source, originalId: skinId, cssOrigin }
+  return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true }
+}
+
+/** 顶层调度器：市场源 / 本地单元（包名或路径）统一入口。 */
+export async function adaptExternalSource(
+  entry: ExternalPackEntry,
+  searchFrom: string[] = [],
+): Promise<ExternalPackAdapted> {
+  const skinId = marketSkinId(entry.source)
+  if (skinId) return adaptMarketSkin(skinId, entry)
+  const root = resolveExternalRoot(entry.source, searchFrom)
+  if (!root) {
+    return {
+      pack: {
+        id: `ext-missing-${Date.now()}`,
+        title: entry.title || entry.source,
+        external: { kind: 'external-skin', source: entry.source, originalId: '', cssOrigin: 'none' },
+      },
+      root: '',
+      assets: new Map(),
+      warnings: [`无法解析外部单元: ${entry.source}（包名需已安装在 profile node_modules，或用目录路径 / market:<skinId>）`],
+      ok: false,
+    }
+  }
+  return { ...adaptExternalPack(root, entry), ok: true }
 }

@@ -29,7 +29,7 @@ export function parseConfig(input) {
             if (!o || typeof o !== 'object')
                 throw new Error(`ui-skins 配置 externalPacks[${i}] 期望对象`);
             for (const k of Object.keys(o)) {
-                if (!['source', 'id', 'enabled', 'cssFiles'].includes(k)) {
+                if (!['source', 'id', 'enabled', 'cssFiles', 'title', 'description'].includes(k)) {
                     throw new Error(`ui-skins 配置 externalPacks[${i}] 未知字段: ${k}`);
                 }
             }
@@ -52,6 +52,13 @@ export function parseConfig(input) {
                     throw new Error(`ui-skins 配置 externalPacks[${i}].cssFiles 期望 string[]`);
                 }
                 entry.cssFiles = o.cssFiles;
+            }
+            for (const key of ['title', 'description']) {
+                if (o[key] !== undefined) {
+                    if (typeof o[key] !== 'string')
+                        throw new Error(`ui-skins 配置 externalPacks[${i}].${key} 期望 string`);
+                    entry[key] = o[key];
+                }
             }
             return entry;
         });

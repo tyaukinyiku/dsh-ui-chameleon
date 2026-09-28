@@ -25,13 +25,20 @@ export function applySpecToDom(doc: Document, spec: UiSpec): void {
   const prevAttr = g.__uiSkinsBodyAttr ?? null
   const nextAttr = spec.bodyAttr ?? null
   if (prevAttr !== nextAttr) {
+    // bodyAttr 形如 `attr` 或 `attr=value`（市场皮肤 html[data-dsh-skin="<id>"]）。
+    const parseAttr = (raw: string): [string, string] => {
+      const eq = raw.indexOf('=')
+      return eq >= 0 ? [raw.slice(0, eq), raw.slice(eq + 1)] : [raw, '']
+    }
     if (prevAttr) {
-      doc.documentElement.removeAttribute(prevAttr)
-      doc.body?.removeAttribute(prevAttr)
+      const [name] = parseAttr(prevAttr)
+      doc.documentElement.removeAttribute(name)
+      doc.body?.removeAttribute(name)
     }
     if (nextAttr) {
-      doc.documentElement.setAttribute(nextAttr, '')
-      doc.body?.setAttribute(nextAttr, '')
+      const [name, value] = parseAttr(nextAttr)
+      doc.documentElement.setAttribute(name, value)
+      doc.body?.setAttribute(name, value)
     }
     g.__uiSkinsBodyAttr = nextAttr
   }

@@ -15,6 +15,12 @@
 
 declare const process: { cwd(): string }
 
+declare function fetch(url: string): Promise<{
+  ok: boolean
+  status: number
+  text(): Promise<string>
+}>
+
 declare module '@deepseek-ai/cordis' {
   export interface Context {
     /** dsh 的服务挂在 ctx 上（ctx.uiSkins、ctx.slots、ctx.storageDomain、ctx.settings……）。 */

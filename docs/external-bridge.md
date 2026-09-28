@@ -40,11 +40,24 @@ CSS 作用域 `body[data-dsh-<id>]`（`bodyAttr` 即激活开关）；inject `co
 
 ```yaml
 externalPacks:              # 外部皮肤单元清单
+  - source: 'market:cafe-roastery'  # dsh-market.com 市场皮肤（市场源）
+    title: 咖啡工坊          # 可选：卡片标题覆盖（市场无元数据端点）
   - source: '@captain1275/dsh-client-ui-skin-aurora'  # 包名（profile node_modules）或目录路径
     id: ''                  # 可选：覆盖生成的 pack id（默认 ext-<skin.id>）
     enabled: true           # 可选：默认 true
     cssFiles: []            # 可选：显式 CSS 资产（相对单元根）
 ```
+
+#### dsh-market.com 市场源（v2 资产契约 `x-org.linxin666.skin-center/v1alpha1`）
+
+- 来源写法：`market:<skinId>` 或市场 URL（`/skins/<id>`、`?skin=<id>`）
+- 资产拉取：`GET /api/skin-center/v2/skins/{id}/stylesheet|patches` → CSS 文本（url() 重写为绝对资产地址）
+- 作用域：`html[data-dsh-skin="<id>"]`（经 bodyAttr=`attr=value` 激活机制设置）
+- **特异度锚**：市场皮肤常以 `:root`(0,1,0) 定义 token，会被 dsh 官方同名 token 的后注入定义压过 →
+  适配器将 `:root` 重写为 `html[data-ui-pack="<id>"]`(0,1,1) 赢下层叠
+- **市场皮肤惯例（重要）**：`html` 层把官方别名复位为 `initial`（推断 dsh :root 继承），
+  真实值定义在 `body` 层——诊断/探针**必须读 body 而非 html**
+- 安全边界：`hooks.mjs`（动态装饰 JS）**不执行**；assets/* 运行时联网加载；纯 CSS 皮肤（如 cafe-roastery）保真完整
 
 ### 3.2 数据流
 
