@@ -24,7 +24,7 @@ export interface ExternalPackAdapted {
 export const EXTERNAL_ROUTE_PREFIX = '/ui-skins/external'
 
 /** 从给定起点向上找 node_modules 目录（包名解析锚点）。 */
-function findNodeModules(start: string): string | null {
+export function findNodeModules(start: string): string | null {
   let dir = start
   for (let i = 0; i < 10; i++) {
     const cand = join(dir, 'node_modules')
@@ -140,6 +140,17 @@ function walkCss(dir: string, depth: number, out: string[]): void {
   }
 }
 
+
+/** 递归登记资产白名单（rel -> abs），供 asset 路由服务。 */
+function walkAssetFiles(dir: string, root: string, assets: Map<string, string>, depth: number): void {
+  if (depth <= 0 || !existsSync(dir)) return
+  for (const name of readdirSync(dir)) {
+    const abs = join(dir, name)
+    if (statSync(abs).isDirectory()) walkAssetFiles(abs, root, assets, depth - 1)
+    else assets.set(abs.slice(root.length + 1).split(sep).join('/'), abs)
+  }
+}
+
 /** 把一个外部皮肤单元适配为 UiPackDescriptor。 */
 export function adaptExternalPack(root: string, entry: ExternalPackEntry): ExternalPackAdapted {
   const warnings: string[] = []
@@ -179,6 +190,34 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
       }
     }
     if (mapped.light || mapped.dark) pack.preview = mapped
+  }
+
+  // v2 资产布局（市场下载落盘形态 $DSH_HOME/skins/<id>/）：stylesheet + patches + assets/**
+  const v2Style = join(root, 'stylesheet')
+  const v2Patches = join(root, 'patches')
+  if (existsSync(v2Style) || existsSync(v2Patches)) {
+    const parts: string[] = []
+    for (const f of [v2Style, v2Patches]) {
+      if (!existsSync(f)) continue
+      const text = readFileSync(f, 'utf8')
+      // 与市场源一致：:root 锚定到 pack 激活属性赢下官方 token 层叠
+      parts.push(rewriteCssUrls(text.replaceAll(':root', `html[data-ui-pack="${id}"]`), `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`))
+    }
+    if (parts.length > 0) {
+      pack.baseCss = parts.join('\n')
+      // v2 作用域在样式表内嵌（html[data-dsh-skin="<id>"]），以 CSS 为准提取激活标记
+      const scope = parts.join('\n').match(/data-dsh-skin="([^"]+)"/)
+      pack.bodyAttr = `data-dsh-skin=${scope ? scope[1] : skinId}`
+      walkAssetFiles(join(root, 'assets'), root, assets, 4)
+      pack.external = {
+        kind: 'external-skin',
+        source: entry.source,
+        originalId: skinId,
+        package: typeof skin.package === 'string' ? skin.package : undefined,
+        cssOrigin: 'v2',
+      }
+      return { pack, root, assets, warnings, ok: true }
+    }
   }
 
   // CSS 资产：显式 > 发现 > 提取
@@ -320,4 +359,49 @@ export async function adaptExternalSource(
     }
   }
   return { ...adaptExternalPack(root, entry), ok: true }
+}
+
+
+// ---------------------------------------------------------------------------
+// 无感发现：市场下载目录（$DSH_HOME/skins/<id>/）与 profile node_modules 皮肤包
+// ---------------------------------------------------------------------------
+
+/** 展开 `~` 前缀。 */
+export function expandHome(path: string): string {
+  return path.startsWith('~') ? join(process.env.HOME ?? '', path.slice(1)) : path
+}
+
+/** 扫描一个目录下的皮肤单元（子目录含 skin.json 或 v2 stylesheet/patches）。 */
+export function scanSkinUnits(dir: string): string[] {
+  const out: string[] = []
+  const base = expandHome(dir)
+  if (!existsSync(base) || !statSync(base).isDirectory()) return out
+  for (const name of readdirSync(base)) {
+    const abs = join(base, name)
+    if (!statSync(abs).isDirectory()) continue
+    if (existsSync(join(abs, 'skin.json')) || existsSync(join(abs, 'stylesheet')) || existsSync(join(abs, 'patches'))) {
+      out.push(abs)
+    }
+  }
+  return out
+}
+
+/** 扫描 node_modules 顶层（含 @scope）里的皮肤包（dsh plugin add 安装的皮肤）。 */
+export function scanNodeModulesSkins(nodeModulesDir: string): string[] {
+  const out: string[] = []
+  if (!existsSync(nodeModulesDir)) return out
+  for (const name of readdirSync(nodeModulesDir)) {
+    if (name === '.bin' || name === '.pnpm' || name.startsWith('.')) continue
+    const abs = join(nodeModulesDir, name)
+    if (!statSync(abs).isDirectory()) continue
+    if (name.startsWith('@')) {
+      for (const sub of readdirSync(abs)) {
+        const subAbs = join(abs, sub)
+        if (statSync(subAbs).isDirectory() && existsSync(join(subAbs, 'skin.json'))) out.push(subAbs)
+      }
+    } else if (existsSync(join(abs, 'skin.json'))) {
+      out.push(abs)
+    }
+  }
+  return out
 }

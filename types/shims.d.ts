@@ -13,7 +13,7 @@
  * 如与真实签名有出入，以真实包为准并同步修正本文件。
  */
 
-declare const process: { cwd(): string }
+declare const process: { cwd(): string; env: Record<string, string | undefined> }
 
 declare function fetch(url: string): Promise<{
   ok: boolean

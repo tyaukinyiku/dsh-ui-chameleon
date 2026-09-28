@@ -59,6 +59,19 @@ externalPacks:              # 外部皮肤单元清单
   真实值定义在 `body` 层——诊断/探针**必须读 body 而非 html**
 - 安全边界：`hooks.mjs`（动态装饰 JS）**不执行**；assets/* 运行时联网加载；纯 CSS 皮肤（如 cafe-roastery）保真完整
 
+### 3.1.1 无感发现（零配置，推荐）
+
+市场下载完**无需任何手动配置**，皮肤自动出现在 🎨 选择器：
+
+- **市场下载落盘标准**（皮肤中心契约）：`$DSH_HOME/skins/<id>/` —— dsh-market.com 皮肤中心按需安装即写入此目录；
+  本框架自动扫描收录（**运行时热收录**：4s 周期重扫，下载完不重启即可见）
+- **`dsh plugin add` 装的皮肤包**：profile `node_modules` 里含 `skin.json` 的包自动收录（如 dsh-deep-whale 系列）
+- 配置面（全部有默认值，通常无需理会）：`externalAutoDiscover: true`、
+  `externalScanDirs: ['~/.dsh/skins', '~/.dsh/skin-center/skins', '~/.dsh/external-skins']`、`externalRescanMs: 4000`
+- **v2 落盘布局无损适配**：`stylesheet` + `patches` + `assets/**` 原样收编（`:root` 特异度锚定保层叠、
+  assets 走本地白名单路由离线可用、作用域属性从 CSS 内嵌提取不依赖目录名）
+- 去重：同 pack id 只收一次（手动配置优先于发现）
+
 ### 3.2 数据流
 
 ```

@@ -96,7 +96,7 @@ export interface UiExternalSource {
   source: string
   originalId: string
   package?: string
-  cssOrigin?: 'files' | 'discover' | 'extract' | 'market' | 'none'
+  cssOrigin?: 'files' | 'discover' | 'extract' | 'market' | 'v2' | 'none'
 }
 
 export interface UiPackDescriptor {

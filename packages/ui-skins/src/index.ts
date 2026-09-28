@@ -13,7 +13,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Config, type Config as UiSkinsConfig } from './config.ts'
 import { UiSkins } from './service.ts'
 import { installHttpRoutes } from './http-routes.ts'
-import { adaptExternalSource, type ExternalPackAdapted } from './external.ts'
+import {
+  adaptExternalPack,
+  adaptExternalSource,
+  findNodeModules,
+  scanNodeModulesSkins,
+  scanSkinUnits,
+  type ExternalPackAdapted,
+} from './external.ts'
 
 export const name = 'ui-skins'
 
@@ -32,14 +39,42 @@ export function apply(ctx: Context, config: UiSkinsConfig): void {
   // 外部 web-ui 皮肤单元（外部包集成器）：市场源 / 本地单元统一适配为 pack。
   // 适配器只读外部单元的数据（skin.json/CSS/预览图），不执行外部代码；市场拉取为异步。
   const external: ExternalPackAdapted[] = []
+  const seenRoots = new Set<string>()
+  const seenIds = new Set<string>()
+  const baseDirs = [new URL('.', import.meta.url).pathname, process.cwd()]
+  const register = (adapted: ExternalPackAdapted): void => {
+    if (!adapted.ok || seenIds.has(adapted.pack.id)) return
+    seenIds.add(adapted.pack.id)
+    seenRoots.add(adapted.root)
+    external.push(adapted)
+    ctx.effect(() => ctx.uiSkins.registerPack(adapted.pack), `ui-skins: external pack ${adapted.pack.id}`)
+  }
   void (async () => {
     for (const entry of config.externalPacks) {
       if (entry.enabled === false) continue
-      const adapted = await adaptExternalSource(entry, [new URL('.', import.meta.url).pathname, process.cwd()])
-      external.push(adapted)
-      if (adapted.ok) {
-        ctx.effect(() => ctx.uiSkins.registerPack(adapted.pack), `ui-skins: external pack ${adapted.pack.id}`)
+      const adapted = await adaptExternalSource(entry, baseDirs)
+      seenRoots.add(adapted.root)
+      register(adapted)
+    }
+    // 无感发现：市场下载目录（$DSH_HOME/skins/<id>/）+ node_modules 皮肤包，零配置收录。
+    const runDiscover = (): void => {
+      if (!config.externalAutoDiscover) return
+      const roots = new Set<string>()
+      for (const dir of config.externalScanDirs) for (const root of scanSkinUnits(dir)) roots.add(root)
+      for (const base of baseDirs) {
+        const nm = findNodeModules(base)
+        if (nm) for (const root of scanNodeModulesSkins(nm)) roots.add(root)
       }
+      for (const root of roots) {
+        if (seenRoots.has(root)) continue
+        seenRoots.add(root)
+        register({ ...adaptExternalPack(root, { source: root }), ok: true })
+      }
+    }
+    runDiscover()
+    if (config.externalRescanMs > 0) {
+      const timer = setInterval(runDiscover, config.externalRescanMs)
+      ctx.effect(() => () => clearInterval(timer), 'ui-skins: external rescan')
     }
   })()
 

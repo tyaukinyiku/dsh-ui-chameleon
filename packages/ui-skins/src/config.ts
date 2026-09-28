@@ -25,6 +25,12 @@ export interface Config {
   observerOrder: number
   /** 外部 web-ui 皮肤单元（包名或路径）；由适配器转为 pack 注册。 */
   externalPacks: ExternalPackEntry[]
+  /** 无感发现：自动扫描市场下载目录与 node_modules 皮肤包（默认开）。 */
+  externalAutoDiscover: boolean
+  /** 无感发现的扫描目录（~ 展开）；默认含市场下载落盘标准 $DSH_HOME/skins。 */
+  externalScanDirs: string[]
+  /** 周期重扫描间隔（毫秒，0=关）：下载完无需重启即收录。 */
+  externalRescanMs: number
 }
 
 const DEFAULTS: Config = {
@@ -41,6 +47,9 @@ const DEFAULTS: Config = {
   observerId: 'ui-skins-observer',
   observerOrder: 0,
   externalPacks: [],
+  externalAutoDiscover: true,
+  externalScanDirs: ['~/.dsh/skins', '~/.dsh/skin-center/skins', '~/.dsh/external-skins'],
+  externalRescanMs: 4000,
 }
 
 /** 填充默认值 + 字段校验；配置错误响亮抛出。 */
@@ -49,6 +58,22 @@ export function parseConfig(input: unknown): Config {
   const config: Config = { ...DEFAULTS, defaultTokens: {} }
   for (const key of Object.keys(raw)) {
     if (!(key in DEFAULTS)) throw new Error(`ui-skins 配置未知字段: ${key}`)
+  }
+  if (raw.externalAutoDiscover !== undefined) {
+    if (typeof raw.externalAutoDiscover !== 'boolean') throw new Error('ui-skins 配置 externalAutoDiscover 期望 boolean')
+    config.externalAutoDiscover = raw.externalAutoDiscover
+  }
+  if (raw.externalRescanMs !== undefined) {
+    if (typeof raw.externalRescanMs !== 'number' || raw.externalRescanMs < 0) {
+      throw new Error('ui-skins 配置 externalRescanMs 期望非负数字')
+    }
+    config.externalRescanMs = raw.externalRescanMs
+  }
+  if (raw.externalScanDirs !== undefined) {
+    if (!Array.isArray(raw.externalScanDirs) || raw.externalScanDirs.some((d) => typeof d !== 'string')) {
+      throw new Error('ui-skins 配置 externalScanDirs 期望 string[]')
+    }
+    config.externalScanDirs = raw.externalScanDirs as string[]
   }
   if (raw.externalPacks !== undefined) {
     if (!Array.isArray(raw.externalPacks)) throw new Error('ui-skins 配置 externalPacks 期望数组')
