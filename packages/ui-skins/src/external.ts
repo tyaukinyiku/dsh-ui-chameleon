@@ -87,10 +87,36 @@ export function extractCssFromBundle(js: string): string {
       }
       if (!looksLikeCss(s) || seen.has(s)) continue
       seen.add(s)
-      out.push(s)
+      out.push(sanitizeCssChunk(s))
     }
   }
   return out.join('\n')
+}
+
+
+/** 逐段净化：配平引号/圆括号/花括号——残缺碎片会毒化整表 CSS 解析（规则被解析器丢弃）。 */
+function sanitizeCssChunk(s: string): string {
+  let braces = 0
+  let parens = 0
+  let inStr = ''
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i]
+    if (inStr) {
+      if (c === '\\') i += 1
+      else if (c === inStr) inStr = ''
+      continue
+    }
+    if (c === '"' || c === "'") inStr = c
+    else if (c === '{') braces += 1
+    else if (c === '}') braces = Math.max(0, braces - 1)
+    else if (c === '(') parens += 1
+    else if (c === ')') parens = Math.max(0, parens - 1)
+  }
+  let tail = ''
+  if (inStr) tail += inStr
+  if (parens > 0 && parens <= 5) tail += ')'.repeat(parens)
+  if (braces > 0 && braces <= 5) tail += '}'.repeat(braces)
+  return tail ? s + '\n' + tail : s
 }
 
 function looksLikeCss(s: string): boolean {
