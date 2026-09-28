@@ -19,6 +19,8 @@ export interface ExternalPackAdapted {
   warnings: string[]
   /** false = 未成功适配（来源缺失/拉取失败），不注册 pack 仅留诊断。 */
   ok: boolean
+  /** 官方 hooks 契约模块文本（动态装饰/美术层），由传输面 /external/<id>/hooks 提供。 */
+  hooks?: string
 }
 
 export const EXTERNAL_ROUTE_PREFIX = '/ui-skins/external'
@@ -216,7 +218,11 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
         package: typeof skin.package === 'string' ? skin.package : undefined,
         cssOrigin: 'v2',
       }
-      return { pack, root, assets, warnings, ok: true }
+      pack.hooksUrl = `${EXTERNAL_ROUTE_PREFIX}/${id}/hooks`
+      pack.assetBase = `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`
+      const hooksFile = join(root, 'hooks.mjs')
+      const hooks = existsSync(hooksFile) ? readFileSync(hooksFile, 'utf8') : undefined
+      return { pack, root, assets, warnings, ok: true, hooks }
     }
   }
 
@@ -331,10 +337,22 @@ export async function adaptMarketSkin(skinId: string, entry: ExternalPackEntry):
     title: entry.title || skinId,
     description: entry.description || `dsh-market.com 市场皮肤（${skinId}）`,
     bodyAttr: `data-dsh-skin=${skinId}`,
+    hooksUrl: `${EXTERNAL_ROUTE_PREFIX}/${id}/hooks`,
+    assetBase,
+  }
+  let hooks: string | undefined
+  try {
+    const res = await fetch(`${assetBase}/hooks.mjs`)
+    if (res.ok) {
+      const text = await res.text()
+      if (text.trim()) hooks = text
+    }
+  } catch {
+    /* 无 hooks（纯 CSS 皮肤）属正常 */
   }
   if (cssParts.length > 0) pack.baseCss = cssParts.join('\n')
   pack.external = { kind: 'external-skin', source: entry.source, originalId: skinId, cssOrigin }
-  return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true }
+  return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true, hooks }
 }
 
 /** 顶层调度器：市场源 / 本地单元（包名或路径）统一入口。 */

@@ -119,6 +119,10 @@ export interface UiPackDescriptor {
   preview?: { light?: string; dark?: string }
   /** 外部来源标注（适配器生成）。 */
   external?: UiExternalSource
+  /** 官方 hooks 契约（x-org.linxin666.skin-center）：apply(ctx)/ctx.onCleanup 动态装饰模块。 */
+  hooksUrl?: string
+  /** hooks 的资产基地址（ctx.assetBase）：本地资产路由或市场资产地址。 */
+  assetBase?: string
 }
 
 /** 解析结果的来源标注（调试/设置界面用）。 */
@@ -136,6 +140,8 @@ export interface UiSpec {
   packId: string | null
   /** 生效 pack 的 body 属性激活标记（外部皮肤作用域开关）。 */
   bodyAttr?: string | null
+  /** 生效 pack 的 hooks 挂载信息（美术/装饰层）。 */
+  hooks?: { url: string; assetBase: string } | null
   themeId: string | null
   layoutId: string | null
   /** 最终生效的 CSS 自定义属性表（打底 + 覆盖合并后）。 */

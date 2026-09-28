@@ -90,6 +90,17 @@ async function handle(service: UiSkins, external: ExternalPackAdapted[], req: In
   }
   if (method === 'GET' && path.startsWith('/external/')) {
     const rest = path.slice('/external/'.length)
+    const hookAt = rest.indexOf('/hooks')
+    if (hookAt > 0) {
+      const item = external.find((e) => e.pack.id === rest.slice(0, hookAt))
+      if (item?.hooks) {
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+        res.end(item.hooks)
+        return
+      }
+      sendJson(res, 404, { error: 'hooks not found' })
+      return
+    }
     const assetAt = rest.indexOf('/asset/')
     if (assetAt > 0) {
       const packId = rest.slice(0, assetAt)

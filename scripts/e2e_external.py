@@ -95,6 +95,7 @@ def state(page):
         pack: document.documentElement.getAttribute('data-ui-pack'),
         htmlAttr: document.documentElement.getAttribute(attr),
         bodyAttr: document.body.getAttribute(attr),
+        hooks: document.documentElement.getAttribute('data-ui-hooks'),
         cssVar: getComputedStyle(document.body).getPropertyValue(cssVar).trim(),
       })""",
         [BODY_ATTR, CSS_PROBE],
@@ -152,7 +153,7 @@ def main():
         check("绑定写入会话层", f'"level":"session"' in last_post, last_post[:90])
         s = state(page)
         check("应用到会话：pack=ext-aurora", s["pack"] == EXT_ID, str(s["pack"]))
-        check("bodyAttr 激活（html+body 双挂）", s["bodyAttr"] is not None and s["htmlAttr"] is not None)
+        check("bodyAttr 激活（html+body 双挂）+ hooks 挂载", s["bodyAttr"] is not None and s["htmlAttr"] is not None, "hooks=" + str(s.get("hooks")))
         diag = page.evaluate("(cssp) => { const st = document.getElementById('dsh-ui-skins-style'); const txt = st ? (st.textContent || '') : ''; const attr = document.documentElement.getAttribute('data-dsh-skin') || document.documentElement.getAttribute('data-ui-pack'); const val = getComputedStyle(document.documentElement).getPropertyValue(cssp); const nRules = Array.from(document.styleSheets).reduce((n, sh) => { try { return n + (sh.cssRules || []).length } catch (e) { return n } }, 0); return JSON.stringify({ attr, val: val.slice(0, 24), styleLen: txt.length, probeInStyle: txt.includes(cssp), anchorInStyle: txt.includes('data-dsh-skin='), nRules }) }", CSS_PROBE)
         check("第三方作用域 CSS 生效（自定义属性非空）", bool(s["cssVar"]), s["cssVar"][:40] + " diag=" + str(diag))
         applied_cssval = s["cssVar"]

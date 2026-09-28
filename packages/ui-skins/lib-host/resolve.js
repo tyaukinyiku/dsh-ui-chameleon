@@ -351,6 +351,7 @@ export function resolveUi(input) {
     return {
         packId: pack?.id ?? null,
         bodyAttr: pack?.bodyAttr ?? null,
+        hooks: pack?.hooksUrl ? { url: pack.hooksUrl, assetBase: pack.assetBase ?? '' } : null,
         themeId,
         layoutId,
         tokens,

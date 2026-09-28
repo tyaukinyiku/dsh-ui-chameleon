@@ -57,7 +57,10 @@ externalPacks:              # 外部皮肤单元清单
   适配器将 `:root` 重写为 `html[data-ui-pack="<id>"]`(0,1,1) 赢下层叠
 - **市场皮肤惯例（重要）**：`html` 层把官方别名复位为 `initial`（推断 dsh :root 继承），
   真实值定义在 `body` 层——诊断/探针**必须读 body 而非 html**
-- 安全边界：`hooks.mjs`（动态装饰 JS）**不执行**；assets/* 运行时联网加载；纯 CSS 皮肤（如 cafe-roastery）保真完整
+- **hooks.mjs 动态装饰/美术层已执行**（无损关键）：按官方契约 `apply(ctx)`/`ctx.onCleanup`/`ctx.assetBase`
+  挂载——激活 pack 时运行（背景图/装饰/动画全量），切走时回收（保留会话/工作区分层，优于原生全局态）。
+  经 `<script type="module">` + blob URL 原生执行（TS 会把 `import()` 转译成 `require(url)` 失效——踩坑备忘）。
+  纯 CSS 皮肤（如 cafe-roastery）无 hooks 亦保真完整；v1 插件包皮肤建议用市场 v2 版本（美术层等价移植）
 
 ### 3.1.1 无感发现（零配置，推荐）
 
