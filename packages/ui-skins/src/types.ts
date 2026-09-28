@@ -74,6 +74,27 @@ export interface UiLayout {
  * UI pack（host 半，数据面）：由普通 dsh 插件通过 ctx.uiSkins.registerPack() 注册。
  * 浏览器半（渲染组件）由同一个包的 ./client 入口注册到 ctx.uiSkinsClient。
  */
+/** 外部包配置项（适配器输入；JSON 可序列化）。 */
+export interface ExternalPackEntry {
+  /** 外部皮肤单元来源：包名（profile node_modules 解析）或目录路径。 */
+  source: string
+  /** 可选：覆盖生成的 pack id（默认 ext-<skin.id>）。 */
+  id?: string
+  /** 可选：默认 true。 */
+  enabled?: boolean
+  /** 可选：显式 CSS 资产（相对单元根）；缺省时自动发现/提取。 */
+  cssFiles?: string[]
+}
+
+/** 外部来源标注（适配器生成；调试/设置界面用）。 */
+export interface UiExternalSource {
+  kind: 'external-skin'
+  source: string
+  originalId: string
+  package?: string
+  cssOrigin?: 'files' | 'discover' | 'extract' | 'none'
+}
+
 export interface UiPackDescriptor {
   id: string
   title?: string
@@ -88,6 +109,12 @@ export interface UiPackDescriptor {
   layouts?: Record<string, UiLayout>
   defaultTheme?: string
   defaultLayout?: string
+  /** 外部皮肤：body 属性激活标记（如 data-dsh-aurora）；激活 pack 时由 runtime 设置。 */
+  bodyAttr?: string
+  /** 预览图 URL（外部皮肤卡用；light/dark）。 */
+  preview?: { light?: string; dark?: string }
+  /** 外部来源标注（适配器生成）。 */
+  external?: UiExternalSource
 }
 
 /** 解析结果的来源标注（调试/设置界面用）。 */
@@ -103,6 +130,8 @@ export interface UiProvenance {
 /** 三级解析后的最终 UI 规格。 */
 export interface UiSpec {
   packId: string | null
+  /** 生效 pack 的 body 属性激活标记（外部皮肤作用域开关）。 */
+  bodyAttr?: string | null
   themeId: string | null
   layoutId: string | null
   /** 最终生效的 CSS 自定义属性表（打底 + 覆盖合并后）。 */

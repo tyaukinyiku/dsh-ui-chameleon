@@ -18,6 +18,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { BindingLevel, UiLayerConfig, UiTarget } from './types.ts'
 import type { UiSkins } from './service.ts'
+import type { ExternalPackAdapted } from './external.ts'
+import { readFileSync } from 'node:fs'
+import { extname } from 'node:path'
 
 export const UI_SKINS_ROUTE_BASE = '/ui-skins'
 
@@ -30,7 +33,7 @@ interface WebServerLike {
 }
 
 /** 由 index.apply 以显式 service 实例调用（避免未声明的 ctx 属性访问）。 */
-export function installHttpRoutes(ctx: Context, service: UiSkins): void {
+export function installHttpRoutes(ctx: Context, service: UiSkins, external: ExternalPackAdapted[] = []): void {
   const webServer = (ctx as unknown as { webServer?: WebServerLike }).webServer
   if (!webServer?.register) throw new Error('ui-skins: ctx.webServer 不可用')
   ctx.effect(
@@ -39,7 +42,7 @@ export function installHttpRoutes(ctx: Context, service: UiSkins): void {
         kind: 'prefix',
         path: UI_SKINS_ROUTE_BASE,
         handler: (req, res) => {
-          void handle(service, req, res).catch((error: unknown) => {
+          void handle(service, external, req, res).catch((error: unknown) => {
             sendJson(res, 500, { error: String(error) })
           })
         },
@@ -48,13 +51,57 @@ export function installHttpRoutes(ctx: Context, service: UiSkins): void {
   )
 }
 
-async function handle(service: UiSkins, req: IncomingMessage, res: ServerResponse): Promise<void> {
+function sendFile(res: ServerResponse, abs: string): void {
+  const types: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.css': 'text/css; charset=utf-8',
+  }
+  res.writeHead(200, { 'content-type': types[extname(abs).toLowerCase()] ?? 'application/octet-stream' })
+  res.end(readFileSync(abs))
+}
+
+async function handle(service: UiSkins, external: ExternalPackAdapted[], req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://ui-skins.invalid')
   const path = url.pathname.slice(UI_SKINS_ROUTE_BASE.length)
   const method = req.method ?? 'GET'
 
   if (method === 'GET' && path === '/state') {
     sendJson(res, 200, service.describe())
+    return
+  }
+  if (method === 'GET' && path === '/external') {
+    sendJson(res, 200, {
+      packs: external.map((e) => ({
+        id: e.pack.id,
+        title: e.pack.title,
+        description: e.pack.description,
+        bodyAttr: e.pack.bodyAttr ?? null,
+        preview: e.pack.preview ?? null,
+        external: e.pack.external ?? null,
+        warnings: e.warnings,
+      })),
+    })
+    return
+  }
+  if (method === 'GET' && path.startsWith('/external/')) {
+    const rest = path.slice('/external/'.length)
+    const assetAt = rest.indexOf('/asset/')
+    if (assetAt > 0) {
+      const packId = rest.slice(0, assetAt)
+      const rel = rest.slice(assetAt + '/asset/'.length)
+      const item = external.find((e) => e.pack.id === packId)
+      const abs = item?.assets.get(rel)
+      if (abs) {
+        sendFile(res, abs)
+        return
+      }
+    }
+    sendJson(res, 404, { error: 'asset not found' })
     return
   }
   if (method === 'GET' && path === '/resolve') {

@@ -20,6 +20,21 @@ export function applySpecToDom(doc: Document, spec: UiSpec): void {
   }
 
   setAttr(doc, 'data-ui-pack', spec.packId)
+  // 外部皮肤：body 属性激活开关（body + html 双挂，兼容 body[data-*] 作用域）。
+  const g = doc as unknown as { __uiSkinsBodyAttr?: string | null }
+  const prevAttr = g.__uiSkinsBodyAttr ?? null
+  const nextAttr = spec.bodyAttr ?? null
+  if (prevAttr !== nextAttr) {
+    if (prevAttr) {
+      doc.documentElement.removeAttribute(prevAttr)
+      doc.body?.removeAttribute(prevAttr)
+    }
+    if (nextAttr) {
+      doc.documentElement.setAttribute(nextAttr, '')
+      doc.body?.setAttribute(nextAttr, '')
+    }
+    g.__uiSkinsBodyAttr = nextAttr
+  }
   setAttr(doc, 'data-ui-theme', spec.themeId)
   setAttr(doc, 'data-ui-layout', spec.layoutId)
 

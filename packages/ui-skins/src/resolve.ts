@@ -355,6 +355,7 @@ export function resolveUi(input: ResolveInput): UiSpec {
 
   return {
     packId: pack?.id ?? null,
+    bodyAttr: pack?.bodyAttr ?? null,
     themeId,
     layoutId,
     tokens,

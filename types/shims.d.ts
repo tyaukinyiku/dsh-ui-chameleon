@@ -13,6 +13,8 @@
  * 如与真实签名有出入，以真实包为准并同步修正本文件。
  */
 
+declare const process: { cwd(): string }
+
 declare module '@deepseek-ai/cordis' {
   export interface Context {
     /** dsh 的服务挂在 ctx 上（ctx.uiSkins、ctx.slots、ctx.storageDomain、ctx.settings……）。 */
@@ -93,7 +95,7 @@ declare module 'node:http' {
   export interface ServerResponse {
     writeHead(statusCode: number, headers?: Record<string, string>): void
     write(chunk: string): boolean
-    end(chunk?: string): void
+    end(chunk?: string | Uint8Array): void
     setHeader(name: string, value: string): void
   }
 }
@@ -145,10 +147,16 @@ declare module 'react' {
 
 declare module 'node:fs' {
   export function readFileSync(path: string, encoding: 'utf8'): string
-  export function statSync(path: string): { mtimeMs: number; size: number }
+  export function readFileSync(path: string): Uint8Array
+  export function statSync(path: string): { mtimeMs: number; size: number; isDirectory(): boolean }
   export function existsSync(path: string): boolean
+  export function readdirSync(path: string): string[]
 }
 
 declare module 'node:path' {
   export function join(...parts: string[]): string
+  export function basename(path: string): string
+  export function extname(path: string): string
+  export function resolve(...parts: string[]): string
+  export const sep: string
 }

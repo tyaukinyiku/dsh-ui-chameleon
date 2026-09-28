@@ -38,6 +38,8 @@ const STYLE = `
 .ui-skins-card .desc { font-size: 11px; color: #98a0b0; margin-top: 4px; min-height: 26px; }
 .ui-skins-swatch { display: inline-flex; border-radius: 4px; overflow: hidden; border: 1px solid #2a2e38; }
 .ui-skins-swatch i { width: 12px; height: 12px; display: inline-block; }
+.ui-skins-badge { font-size: 9px; padding: 1px 5px; border-radius: 4px; background: #2b3350; color: #9db4ff; border: 1px solid #3a4468; }
+.ui-skins-preview { width: 100%; height: 72px; object-fit: cover; border-radius: 6px; margin: 6px 0; border: 1px solid #2a2e38; }
 .ui-skins-chip { border: 1px solid #2a2e38; background: #1a1d25; color: #e8eaf0; border-radius: 999px;
   padding: 4px 12px; font-size: 12px; cursor: pointer; }
 .ui-skins-chip:hover { border-color: #4a5060; }
@@ -230,8 +232,23 @@ export async function openPicker(options: PickerOptions): Promise<void> {
     for (const pack of state.packs) {
       const card = el(doc, 'div', { class: `ui-skins-card${pack.id === packId ? ' sel' : ''}`, 'data-pack': pack.id })
       const ttl = el(doc, 'div', { class: 'ttl' }, [swatchOf(pack), pack.title ?? pack.id])
+      if (pack.external) {
+        ttl.append(
+          el(
+            doc,
+            'span',
+            {
+              class: 'ui-skins-badge',
+              title: `外部：${pack.external.source} · CSS: ${pack.external.cssOrigin ?? 'none'}`,
+            },
+            ['外部'],
+          ),
+        )
+      }
       const desc = el(doc, 'div', { class: 'desc' }, [pack.description ?? ''])
       card.append(ttl, desc)
+      const imgSrc = pack.preview?.light ?? pack.preview?.dark
+      if (imgSrc) card.append(el(doc, 'img', { class: 'ui-skins-preview', src: imgSrc, alt: '' }))
       card.addEventListener('click', () => {
         packId = pack.id
         themeSel = null

@@ -350,6 +350,7 @@ export function resolveUi(input) {
     }
     return {
         packId: pack?.id ?? null,
+        bodyAttr: pack?.bodyAttr ?? null,
         themeId,
         layoutId,
         tokens,

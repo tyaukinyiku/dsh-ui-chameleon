@@ -4,7 +4,7 @@
  * Config 导出为 **Standard Schema**（cordis 要求；不导出普通对象），
  * 手写实现以避免运行时依赖 schemastery —— 树外安装时解析不到 @deepseek-ai/*。
  */
-import type { UiLayerConfig } from './types.ts'
+import type { ExternalPackEntry, UiLayerConfig } from './types.ts'
 
 export interface Config {
   enabled: boolean
@@ -23,6 +23,8 @@ export interface Config {
   observerSlot: string
   observerId: string
   observerOrder: number
+  /** 外部 web-ui 皮肤单元（包名或路径）；由适配器转为 pack 注册。 */
+  externalPacks: ExternalPackEntry[]
 }
 
 const DEFAULTS: Config = {
@@ -38,6 +40,7 @@ const DEFAULTS: Config = {
   observerSlot: 'conversation.session.header.utilities',
   observerId: 'ui-skins-observer',
   observerOrder: 0,
+  externalPacks: [],
 }
 
 /** 填充默认值 + 字段校验；配置错误响亮抛出。 */
@@ -46,6 +49,37 @@ export function parseConfig(input: unknown): Config {
   const config: Config = { ...DEFAULTS, defaultTokens: {} }
   for (const key of Object.keys(raw)) {
     if (!(key in DEFAULTS)) throw new Error(`ui-skins 配置未知字段: ${key}`)
+  }
+  if (raw.externalPacks !== undefined) {
+    if (!Array.isArray(raw.externalPacks)) throw new Error('ui-skins 配置 externalPacks 期望数组')
+    config.externalPacks = raw.externalPacks.map((item, i) => {
+      const o = item as Record<string, unknown>
+      if (!o || typeof o !== 'object') throw new Error(`ui-skins 配置 externalPacks[${i}] 期望对象`)
+      for (const k of Object.keys(o)) {
+        if (!['source', 'id', 'enabled', 'cssFiles'].includes(k)) {
+          throw new Error(`ui-skins 配置 externalPacks[${i}] 未知字段: ${k}`)
+        }
+      }
+      if (typeof o.source !== 'string' || !o.source) {
+        throw new Error(`ui-skins 配置 externalPacks[${i}].source 期望非空字符串`)
+      }
+      const entry: ExternalPackEntry = { source: o.source }
+      if (o.id !== undefined) {
+        if (typeof o.id !== 'string') throw new Error(`ui-skins 配置 externalPacks[${i}].id 期望 string`)
+        entry.id = o.id
+      }
+      if (o.enabled !== undefined) {
+        if (typeof o.enabled !== 'boolean') throw new Error(`ui-skins 配置 externalPacks[${i}].enabled 期望 boolean`)
+        entry.enabled = o.enabled
+      }
+      if (o.cssFiles !== undefined) {
+        if (!Array.isArray(o.cssFiles) || o.cssFiles.some((f) => typeof f !== 'string')) {
+          throw new Error(`ui-skins 配置 externalPacks[${i}].cssFiles 期望 string[]`)
+        }
+        entry.cssFiles = o.cssFiles as string[]
+      }
+      return entry
+    })
   }
   const str = (key: keyof Config): void => {
     const value = raw[key]
