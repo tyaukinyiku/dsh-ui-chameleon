@@ -31,20 +31,40 @@ export class BindingStore {
         return this.readyPromise;
     }
     async open() {
+        await this.openOnce();
+        this.readyResolve();
+    }
+    /** 打开存储领域（可重入：写路径在瞬态失败后自愈重试）。 */
+    async openOnce() {
+        if (this.domain)
+            return;
         const facility = this.ctx
             .storageDomain;
         if (!facility?.open) {
-            this.warnings.push('ctx.storageDomain 不可用：绑定仅保留内存态（工作区文件层仍可读）');
-            this.readyResolve();
+            this.warnOnce('ctx.storageDomain 不可用：绑定仅保留内存态（工作区文件层仍可读）');
             return;
         }
         try {
             this.domain = await facility.open(uiSkinsDomain);
         }
         catch (error) {
-            this.warnings.push(`打开存储领域 ${uiSkinsDomain.name} 失败: ${String(error)}`);
+            this.warnOnce(`打开存储领域 ${uiSkinsDomain.name} 失败: ${String(error)}`);
         }
-        this.readyResolve();
+    }
+    warnOnce(message) {
+        if (!this.warnings.includes(message))
+            this.warnings.push(message);
+    }
+    /** 写路径就绪等待（带上限）：open 竞态或瞬态失败时写时重试自愈。 */
+    async ensureReady() {
+        await Promise.race([this.ready(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+        if (!this.domain)
+            await this.openOnce();
+    }
+    /** 失败原因带出真实诊断（warnings 是 open 失败的具体原因）。 */
+    unavailable() {
+        const tail = this.warnings.slice(-2).join('；');
+        return new Error(`绑定存储不可用（storageDomain 未就绪）${tail ? `：${tail}` : ''}`);
     }
     table(level) {
         return this.domain?.table(level === 'workspace' ? 'workspace_bindings' : 'session_bindings');
@@ -56,9 +76,10 @@ export class BindingStore {
     }
     /** 写（config = null 时删除）绑定记录。 */
     async setBinding(level, id, config) {
+        await this.ensureReady();
         const table = this.table(level);
         if (!table)
-            throw new Error('绑定存储不可用（storageDomain 未就绪）');
+            throw this.unavailable();
         if (config === null)
             await table.delete(id);
         else
