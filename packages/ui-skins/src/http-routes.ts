@@ -36,27 +36,6 @@ interface WebServerLike {
 export function installHttpRoutes(ctx: Context, service: UiSkins, external: ExternalPackAdapted[] = []): void {
   const webServer = (ctx as unknown as { webServer?: WebServerLike }).webServer
   if (!webServer?.register) throw new Error('ui-skins: ctx.webServer 不可用')
-  // /assets 兜底：皮肤 CSS/hooks 若发射相对 assets/* 路径，在此映射到各单元资产白名单
-  ctx.effect(
-    () =>
-      webServer.register({
-        kind: 'prefix',
-        path: '/assets',
-        handler: (req, res) => {
-          const rel = (req.url ?? '').split('?')[0].slice('/assets/'.length)
-          for (const e of external) {
-            const abs = e.assets.get(rel) ?? e.assets.get(`assets/${rel}`)
-            if (abs) {
-              sendFile(res, abs)
-              return
-            }
-          }
-          res.writeHead(404)
-          res.end()
-        },
-      }),
-    'ui-skins: assets fallback',
-  )
   ctx.effect(
     () =>
       webServer.register({

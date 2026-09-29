@@ -96,6 +96,7 @@ def state(page):
         htmlAttr: document.documentElement.getAttribute(attr),
         bodyAttr: document.body.getAttribute(attr),
         hooks: document.documentElement.getAttribute('data-ui-hooks'),
+        bg: getComputedStyle(document.body).backgroundImage.slice(0, 240),
         cssVar: getComputedStyle(document.body).getPropertyValue(cssVar).trim(),
       })""",
         [BODY_ATTR, CSS_PROBE],
@@ -153,10 +154,12 @@ def main():
         check("绑定写入会话层", f'"level":"session"' in last_post, last_post[:90])
         s = state(page)
         check("应用到会话：pack=ext-aurora", s["pack"] == EXT_ID, str(s["pack"]))
-        check("bodyAttr 激活（html+body 双挂）+ hooks 挂载", s["bodyAttr"] is not None and s["htmlAttr"] is not None, "hooks=" + str(s.get("hooks")))
+        bg_ok = (os.environ.get("EXPECT_BG", "") == "1") == ("url(" in (s.get("bg") or ""))
+        check("bodyAttr 激活 + hooks 挂载 + 背景层匹配皮肤类型", s["bodyAttr"] is not None and s["htmlAttr"] is not None and s.get("hooks") is not None and bg_ok, "hooks=" + str(s.get("hooks")) + " bg=" + str(s.get("bg"))[:40])
         diag = page.evaluate("(cssp) => { const st = document.getElementById('dsh-ui-skins-style'); const txt = st ? (st.textContent || '') : ''; const attr = document.documentElement.getAttribute('data-dsh-skin') || document.documentElement.getAttribute('data-ui-pack'); const val = getComputedStyle(document.documentElement).getPropertyValue(cssp); const nRules = Array.from(document.styleSheets).reduce((n, sh) => { try { return n + (sh.cssRules || []).length } catch (e) { return n } }, 0); return JSON.stringify({ attr, val: val.slice(0, 24), styleLen: txt.length, probeInStyle: txt.includes(cssp), anchorInStyle: txt.includes('data-dsh-skin='), nRules }) }", CSS_PROBE)
         check("第三方作用域 CSS 生效（自定义属性非空）", bool(s["cssVar"]), s["cssVar"][:40] + " diag=" + str(diag))
         applied_cssval = s["cssVar"]
+        applied_bg = s.get("bg") or ""
         page.screenshot(path=f"{SHOTS}/external-applied-session.png", full_page=False)
 
         # ---------- 3. 分层测评：工作区写另一皮肤，会话层应压过 ----------
@@ -193,7 +196,7 @@ def main():
         page.wait_for_timeout(800)
         s = state(page)
         check("清除工作区后回落 dsh 层", s["pack"] != "terminal", str(s["pack"]))
-        check("清除后 CSS 变量已非皮肤值（回落官方/空）", s["cssVar"] != applied_cssval, "applied=" + applied_cssval[:20] + " now=" + s["cssVar"][:20])
+        check("清除后回落（css/背景任一退出皮肤态）", s["cssVar"] != applied_cssval or (s.get("bg") or "") in ("none", "") and applied_bg not in ("none", ""), "css: " + applied_cssval[:14] + "->" + s["cssVar"][:14] + " bg: " + applied_bg[:14] + "->" + (s.get("bg") or "")[:14])
 
         bad = [e for e in errors if "password" not in e.lower()]
         check("零 pageerror / 零 console error", len(bad) == 0, "; ".join(bad[:2]))

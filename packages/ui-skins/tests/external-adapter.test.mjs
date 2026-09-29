@@ -44,7 +44,7 @@ test('skin.json → descriptor 映射（id/accent/bodyAttr/预览/来源标注�
   assert.equal(adapted.pack.bodyAttr, 'data-dsh-aurora')
   assert.equal(adapted.pack.baseTokens?.['--ui-accent'], '#7aa2ff')
   assert.match(adapted.pack.description ?? '', /自定义背景图.*毛玻璃面板/s)
-  assert.equal(adapted.pack.external?.cssOrigin, 'discover')
+  assert.equal(adapted.pack.external?.cssOrigin, 'v2')  // skin.css 命名资产走 v2 契约通道
   assert.equal(adapted.pack.external?.package, '@captain1275/dsh-client-ui-skin-aurora')
   assert.match(adapted.pack.baseCss ?? '', /body\[data-dsh-aurora\]/)
   rmSync(root, { recursive: true, force: true })

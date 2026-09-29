@@ -153,6 +153,30 @@ function walkAssetFiles(dir, root, assets, depth) {
             assets.set(abs.slice(root.length + 1).split(sep).join('/'), abs);
     }
 }
+/** contributes.backgroundMedia → 声明式背景层 CSS（亮/暗双态；皮肤中心同款渲染语义）。 */
+function backgroundMediaCss(root, id, bm, assets, warnings) {
+    if (!bm)
+        return '';
+    const rule = (variant, dark) => {
+        const v = bm[variant];
+        if (!v || v.type !== 'image' || !v.src)
+            return '';
+        const rel = v.src.replace(/^\.\//, '');
+        const abs = resolve(root, rel);
+        if (!abs.startsWith(root + sep) || !existsSync(abs)) {
+            warnings.push(`背景美术缺失: ${rel}`);
+            return '';
+        }
+        assets.set(rel, abs);
+        const url = `${EXTERNAL_ROUTE_PREFIX}/${id}/asset/${rel}`;
+        const scrim = typeof v.scrim === 'string' && v.scrim ? `${v.scrim}, ` : '';
+        const sel = dark
+            ? `html[data-ui-pack="${id}"] body[data-ds-dark-theme], html[data-ui-pack="${id}"][data-ds-dark-theme]`
+            : `html[data-ui-pack="${id}"] body, html[data-ui-pack="${id}"]`;
+        return `${sel} { background-image: ${scrim}url("${url}"); background-size: cover; background-position: center; background-attachment: fixed; }`;
+    };
+    return [rule('light', false), rule('dark', true)].filter(Boolean).join('\n');
+}
 /** 把一个外部皮肤单元适配为 UiPackDescriptor。 */
 export function adaptExternalPack(root, entry) {
     const warnings = [];
@@ -195,12 +219,16 @@ export function adaptExternalPack(root, entry) {
         if (mapped.light || mapped.dark)
             pack.preview = mapped;
     }
+    // v2 契约 contributes（x-org.linxin666.skin-center/v1alpha1）：
+    //   stylesheet/patches 指定样式资产文件名；backgroundMedia 声明式背景美术（loader 渲染层）
+    const contributes = (skin.contributes ?? {});
     // v2 资产布局（市场下载落盘形态 $DSH_HOME/skins/<id>/）：stylesheet + patches + assets/**
-    const v2Style = join(root, 'stylesheet');
-    const v2Patches = join(root, 'patches');
-    if (existsSync(v2Style) || existsSync(v2Patches)) {
+    const v2Style = join(root, contributes.stylesheet ?? 'stylesheet');
+    const v2Patches = join(root, contributes.patches ?? 'patches');
+    const v2Alt = [join(root, 'skin.css'), join(root, 'patches.css')];
+    if (existsSync(v2Style) || existsSync(v2Patches) || existsSync(v2Alt[0])) {
         const parts = [];
-        for (const f of [v2Style, v2Patches]) {
+        for (const f of [v2Style, v2Patches, ...v2Alt]) {
             if (!existsSync(f))
                 continue;
             const text = readFileSync(f, 'utf8');
@@ -210,8 +238,10 @@ export function adaptExternalPack(root, entry) {
         if (parts.length > 0) {
             pack.baseCss = parts.join('\n');
             // v2 作用域在样式表内嵌（html[data-dsh-skin="<id>"]），以 CSS 为准提取激活标记
-            const scope = parts.join('\n').match(/data-dsh-skin="([^"]+)"/);
-            pack.bodyAttr = `data-dsh-skin=${scope ? scope[1] : skinId}`;
+            if (!pack.bodyAttr) {
+                const scope = parts.join('\n').match(/data-dsh-skin="([^"]+)"/);
+                pack.bodyAttr = `data-dsh-skin=${scope ? scope[1] : skinId}`;
+            }
             walkAssetFiles(join(root, 'assets'), root, assets, 4);
             pack.external = {
                 kind: 'external-skin',
@@ -224,6 +254,9 @@ export function adaptExternalPack(root, entry) {
             pack.assetBase = `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`;
             const hooksFile = join(root, 'hooks.mjs');
             const hooks = existsSync(hooksFile) ? readFileSync(hooksFile, 'utf8') : undefined;
+            const bg = backgroundMediaCss(root, id, contributes.backgroundMedia, assets, warnings);
+            if (bg)
+                pack.baseCss = `${pack.baseCss ?? ''}\n${bg}`;
             return { pack, root, assets, warnings, ok: true, hooks };
         }
     }
@@ -280,6 +313,9 @@ export function adaptExternalPack(root, entry) {
         package: typeof pkgName === 'string' ? pkgName : typeof skin.package === 'string' ? skin.package : undefined,
         cssOrigin,
     };
+    const bg = backgroundMediaCss(root, id, contributes.backgroundMedia, assets, warnings);
+    if (bg)
+        pack.baseCss = `${pack.baseCss ?? ''}\n${bg}`;
     return { pack, root, assets, warnings, ok: true };
 }
 // ---------------------------------------------------------------------------

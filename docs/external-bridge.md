@@ -24,6 +24,22 @@ lib/client.js        # 浏览器半 bundle（CSS-modules 自动注入）
 **皮肤客户端契约**：`apply(ctx)` 只写可回收内容（`ctx.effect` disposer 还原）；
 CSS 作用域 `body[data-dsh-<id>]`（`bodyAttr` 即激活开关）；inject `connection/sessions/theme`。
 
+## 1.5 v2 契约全景（源码研习：dsh-skins whale-song/blue-fantasy、dsh-deep-whale maid-atelier）
+
+v2 皮肤 = **三层合成**（皮肤中心 loader 渲染语义）：
+
+| 层 | 载体 | 框架支持 |
+|---|---|---|
+| 样式层 | `skin.json.contributes.stylesheet/patches`（即 skin.css/patches.css） | ✅ 读取+特异度锚定 |
+| **美术层** | **`skin.json.contributes.backgroundMedia`**（light/dark：art src + scrim 渐变）声明式背景 | ✅ 合成背景 CSS（亮暗双态、cover、fixed） |
+| 动态层 | `hooks.mjs`：**`export default defineSkinHooks()` 工厂**（返回 `{apply}`）或具名 `apply` | ✅ 双形态兼容挂载 |
+
+- v1 插件皮肤（maid-atelier 仓库版）另有机制：`skinAssetUrl()` → `/skin-assets/<id>/<sha>.webp` 宿主路由 +
+  `*.generated.ts` 资产常量表 + CSS-modules 类名由 JS 行为模块挂载 → **美术/行为层在 JS 运行态**，
+  数据适配只能取到样式层；完整保真请用市场 v2 资产版（美术逐字节等价移植）。
+- ⚠️ **路由命名空间红线**：不得注册 `/assets/*` 兜底（dsh 前端构建产物就住在 `/assets/`，抢占会打挂整个
+  Web 应用）——相对 url() 一律在适配层重写到 `/ui-skins/external/<id>/asset/` 服务。
+
 ## 2. 可行性分析（适配边界）
 
 | 维度 | 结论 | 说明 |
