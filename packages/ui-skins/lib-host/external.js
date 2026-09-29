@@ -267,8 +267,11 @@ export function adaptExternalPack(root, entry) {
     }
     if (cssOrigin === 'none')
         warnings.push('未找到 CSS 资产（可配 cssFiles 显式声明）');
-    if (cssText.trim())
-        pack.baseCss = cssText;
+    if (cssText.trim()) {
+        // v1/提取路径同样要重写 url() 到资产路由（否则相对路径在文档根 404）
+        pack.baseCss = rewriteCssUrls(cssText, `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`);
+    }
+    walkAssetFiles(join(root, 'assets'), root, assets, 4);
     const pkgName = readJson(join(root, 'package.json'))?.name;
     pack.external = {
         kind: 'external-skin',
