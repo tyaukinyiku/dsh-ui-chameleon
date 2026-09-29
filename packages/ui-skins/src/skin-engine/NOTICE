@@ -1,0 +1,34 @@
+skin-engine — vendored rendering engine from @linxin666/dsh-client-ui-skin-center
+================================================================================
+
+The files under this directory (and src/client/skin-engine/ on the client side)
+are vendored from the dsh-skins repository (the DSH Web UI skin center):
+
+  https://github.com/zhu1090093659/dsh-skins
+  package: @linxin666/dsh-client-ui-skin-center
+
+Vendored modules (unmodified except for module paths):
+
+  css-safety/transform.ts               CSS safety pipeline (force-scoping + whitelist)
+  css-safety/fallback.ts                automatic official-token fallback tints
+  css-safety/official-tokens.generated.ts  official token registry (generated data)
+  provenance.ts                         market provenance / reviewed-hooks verification
+  reviewed-hooks.generated.ts           reviewed hooks identity registry (generated data)
+  ../client/skin-engine/skin-controller.ts   atomic skin switch engine
+  ../client/skin-engine/effect-ledger.ts     activation-scoped effect ledger
+  ../client/skin-engine/decoration-layers.ts six fixed decoration layers
+  ../client/skin-engine/backdrop-scene.ts    scene backdrop coordination
+  ../client/skin-engine/semantic-adapter.ts  L2 semantic-attribute stamping
+  ../client/skin-engine/shell-rendering.ts   public shell rendering adapter
+
+Original license: Apache-2.0
+Copyright (c) zhu1090093659 and contributors
+Full license text: see the LICENSE of the dsh-skins repository / the
+THIRD_PARTY_NOTICES of this project.
+
+Rationale: chameleon keeps its own orchestration (three-level resolution,
+session/workspace bindings, picker) but delegates skin RENDERING to the
+official engine semantics so third-party skins from dsh-market.com render
+identically to dsh-web's skin center. Vendoring (vs forking at runtime)
+keeps the tree-external plugin self-contained with zero runtime coupling to
+the skin-center npm package.

@@ -97,6 +97,8 @@ export interface UiExternalSource {
   originalId: string
   package?: string
   cssOrigin?: 'files' | 'discover' | 'extract' | 'market' | 'v2' | 'none'
+  /** true = 已收编官方渲染引擎（skin-engine）：CSS/bodyAttr/hooks 全部由引擎负责。 */
+  engineManaged?: boolean
 }
 
 export interface UiPackDescriptor {
@@ -142,6 +144,8 @@ export interface UiSpec {
   bodyAttr?: string | null
   /** 生效 pack 的 hooks 挂载信息（美术/装饰层）。 */
   hooks?: { url: string; assetBase: string } | null
+  /** 引擎渲染的外部皮肤 id（skin-engine 原子 activation；null/缺省 = 无）。 */
+  externalSkinId?: string | null
   themeId: string | null
   layoutId: string | null
   /** 最终生效的 CSS 自定义属性表（打底 + 覆盖合并后）。 */

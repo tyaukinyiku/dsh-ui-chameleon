@@ -191,7 +191,7 @@ export function adaptExternalPack(root, entry) {
         title: typeof skin.name === 'string' && skin.name ? skin.name : skinId,
         description: [skin.tagline, skin.description]
             .filter((v) => typeof v === 'string' && !!v)
-            .join(' '),
+            .join(' ') || `外部皮肤 ${skinId}（${entry.source}）`,
     };
     if (typeof skin.accent === 'string' && skin.accent) {
         pack.baseTokens = { '--ui-accent': skin.accent };
@@ -228,11 +228,21 @@ export function adaptExternalPack(root, entry) {
     const v2Alt = [join(root, 'skin.css'), join(root, 'patches.css')];
     if (existsSync(v2Style) || existsSync(v2Patches) || existsSync(v2Alt[0])) {
         const parts = [];
-        for (const f of [v2Style, v2Patches, ...v2Alt]) {
+        const rawStyleParts = [];
+        const rawPatchParts = [];
+        for (const f of [v2Style, v2Alt[0]]) {
             if (!existsSync(f))
                 continue;
             const text = readFileSync(f, 'utf8');
+            rawStyleParts.push(text);
             // 与市场源一致：:root 锚定到 pack 激活属性赢下官方 token 层叠
+            parts.push(rewriteCssUrls(text.replaceAll(':root', `html[data-ui-pack="${id}"]`), `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`));
+        }
+        for (const f of [v2Patches, v2Alt[1]]) {
+            if (!existsSync(f))
+                continue;
+            const text = readFileSync(f, 'utf8');
+            rawPatchParts.push(text);
             parts.push(rewriteCssUrls(text.replaceAll(':root', `html[data-ui-pack="${id}"]`), `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`));
         }
         if (parts.length > 0) {
@@ -257,7 +267,20 @@ export function adaptExternalPack(root, entry) {
             const bg = backgroundMediaCss(root, id, contributes.backgroundMedia, assets, warnings);
             if (bg)
                 pack.baseCss = `${pack.baseCss ?? ''}\n${bg}`;
-            return { pack, root, assets, warnings, ok: true, hooks };
+            return {
+                pack,
+                root,
+                assets,
+                warnings,
+                ok: true,
+                hooks,
+                raw: {
+                    stylesheet: rawStyleParts.join('\n'),
+                    patches: rawPatchParts.length > 0 ? rawPatchParts.join('\n') : undefined,
+                    manifest: skin,
+                    remoteAssets: new Map(),
+                },
+            };
         }
     }
     // CSS 资产：显式 > 发现 > 提取
@@ -316,7 +339,18 @@ export function adaptExternalPack(root, entry) {
     const bg = backgroundMediaCss(root, id, contributes.backgroundMedia, assets, warnings);
     if (bg)
         pack.baseCss = `${pack.baseCss ?? ''}\n${bg}`;
-    return { pack, root, assets, warnings, ok: true };
+    return {
+        pack,
+        root,
+        assets,
+        warnings,
+        ok: true,
+        raw: {
+            stylesheet: cssText,
+            manifest: skin,
+            remoteAssets: new Map(),
+        },
+    };
 }
 // ---------------------------------------------------------------------------
 // dsh-market.com 市场源（x-org.linxin666.skin-center/v1alpha1 v2 资产契约）
@@ -358,6 +392,7 @@ export async function adaptMarketSkin(skinId, entry) {
     const id = entry.id || `ext-${skinId}`;
     const assetBase = `${MARKET_ASSET_BASE}/${encodeURIComponent(skinId)}`;
     const cssParts = [];
+    const rawParts = [];
     let cssOrigin = 'none';
     for (const asset of ['stylesheet', 'patches']) {
         try {
@@ -368,6 +403,7 @@ export async function adaptMarketSkin(skinId, entry) {
             }
             const text = await res.text();
             if (text.trim()) {
+                rawParts.push({ kind: asset, text });
                 // `:root`(0,1,0) 会被 dsh 官方同名 token 的后注入定义压过——市场皮肤多为
                 // 官方 token 重映射，必须以更高特异度(0,1,1)锚定在 pack 激活属性上才能赢下层叠。
                 const scoped = text.replaceAll(':root', `html[data-ui-pack="${id}"]`);
@@ -402,7 +438,21 @@ export async function adaptMarketSkin(skinId, entry) {
     if (cssParts.length > 0)
         pack.baseCss = cssParts.join('\n');
     pack.external = { kind: 'external-skin', source: entry.source, originalId: skinId, cssOrigin };
-    return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true, hooks };
+    // 引擎管线原始文本（url() 保持相对；远程资产按需代理）。
+    const rawAssets = {
+        stylesheet: rawParts.filter((p) => p.kind === 'stylesheet').map((p) => p.text).join('\n'),
+        manifest: {
+            id: skinId,
+            name: entry.title || skinId,
+            contributes: { stylesheet: 'stylesheet' },
+        },
+        remoteAssets: new Map(),
+        market: true,
+    };
+    if (rawParts.some((p) => p.kind === 'patches')) {
+        rawAssets.patches = rawParts.filter((p) => p.kind === 'patches').map((p) => p.text).join('\n');
+    }
+    return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true, hooks, raw: rawAssets };
 }
 /** 顶层调度器：市场源 / 本地单元（包名或路径）统一入口。 */
 export async function adaptExternalSource(entry, searchFrom = []) {

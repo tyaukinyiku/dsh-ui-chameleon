@@ -1,8 +1,9 @@
+import { handleExternalV2 } from './skin-engine/external-v2.js';
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 export const UI_SKINS_ROUTE_BASE = '/ui-skins';
 /** 由 index.apply 以显式 service 实例调用（避免未声明的 ctx 属性访问）。 */
-export function installHttpRoutes(ctx, service, external = []) {
+export function installHttpRoutes(ctx, service, external = [], units = []) {
     const webServer = ctx.webServer;
     if (!webServer?.register)
         throw new Error('ui-skins: ctx.webServer 不可用');
@@ -10,7 +11,7 @@ export function installHttpRoutes(ctx, service, external = []) {
         kind: 'prefix',
         path: UI_SKINS_ROUTE_BASE,
         handler: (req, res) => {
-            void handle(service, external, req, res).catch((error) => {
+            void handle(service, external, units, req, res).catch((error) => {
                 sendJson(res, 500, { error: String(error) });
             });
         },
@@ -29,9 +30,15 @@ function sendFile(res, abs) {
     res.writeHead(200, { 'content-type': types[extname(abs).toLowerCase()] ?? 'application/octet-stream' });
     res.end(readFileSync(abs));
 }
-async function handle(service, external, req, res) {
+async function handle(service, external, units, req, res) {
     const url = new URL(req.url ?? '/', 'http://ui-skins.invalid');
     const path = url.pathname.slice(UI_SKINS_ROUTE_BASE.length);
+    // 引擎 v2 传输面（catalog / stylesheet / patches / hooks / 资产）
+    if (path === '/external/v2' || path.startsWith('/external/v2/')) {
+        const sub = path.slice('/external/v2'.length) || '/';
+        if (await handleExternalV2(sub, req, res, units))
+            return;
+    }
     const method = req.method ?? 'GET';
     if (method === 'GET' && path === '/state') {
         sendJson(res, 200, service.describe());

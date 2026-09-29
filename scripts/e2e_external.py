@@ -19,6 +19,8 @@ SHOTS = "/home/work/.openclaw/workspace/.openclaw/tmp/shots"
 WS_NAME = "acme-e2e"
 EXT_ID = os.environ.get("EXT_ID", "ext-aurora")
 BODY_ATTR = os.environ.get("BODY_ATTR", "data-dsh-aurora")
+# 引擎渲染的皮肤 id（html[data-dsh-skin="<id>"]）；缺省从 EXT_ID 去 ext- 前缀推导。
+SKIN_ID = os.environ.get("SKIN_ID", EXT_ID[4:] if EXT_ID.startswith("ext-") else EXT_ID)
 # 第三方 CSS 在 [data-dsh-aurora] 作用域定义的自定义属性（提取自真实 bundle）
 CSS_PROBE = os.environ.get("CSS_PROBE", "--dsh-aurora-glass-card-light")
 
@@ -95,12 +97,24 @@ def state(page):
         pack: document.documentElement.getAttribute('data-ui-pack'),
         htmlAttr: document.documentElement.getAttribute(attr),
         bodyAttr: document.body.getAttribute(attr),
+        skinAttr: document.documentElement.getAttribute('data-dsh-skin'),
+        engineLinks: Array.from(document.querySelectorAll('link[rel="stylesheet"]')).filter((l) => (l.getAttribute('href') || '').includes('/external/v2/skins/')).length,
+        engineLayer: document.querySelectorAll('[data-dsh-skin-layer="background"] img, [data-dsh-skin-layer="background"] video').length,
         hooks: document.documentElement.getAttribute('data-ui-hooks'),
         bg: getComputedStyle(document.body).backgroundImage.slice(0, 240),
         cssVar: getComputedStyle(document.body).getPropertyValue(cssVar).trim(),
       })""",
         [BODY_ATTR, CSS_PROBE],
     )
+
+
+def engine_active(s, expect_skin=SKIN_ID):
+    """引擎渲染激活判定：scope 属性 + 引擎样式表 <link> 就位。"""
+    return s.get("skinAttr") == expect_skin and (s.get("engineLinks") or 0) > 0
+
+
+def legacy_active(s):
+    return s["bodyAttr"] is not None and s["htmlAttr"] is not None and s.get("hooks") is not None
 
 
 def main():
@@ -154,8 +168,13 @@ def main():
         check("绑定写入会话层", f'"level":"session"' in last_post, last_post[:90])
         s = state(page)
         check("应用到会话：pack=ext-aurora", s["pack"] == EXT_ID, str(s["pack"]))
-        bg_ok = (os.environ.get("EXPECT_BG", "") == "1") == ("url(" in (s.get("bg") or ""))
-        check("bodyAttr 激活 + hooks 挂载 + 背景层匹配皮肤类型", s["bodyAttr"] is not None and s["htmlAttr"] is not None and s.get("hooks") is not None and bg_ok, "hooks=" + str(s.get("hooks")) + " bg=" + str(s.get("bg"))[:40])
+        bg_body = "url(" in (s.get("bg") or "")
+        bg_ok = (os.environ.get("EXPECT_BG", "") == "1") == (bg_body or (s.get("engineLayer") or 0) > 0)
+        # 激活证明：引擎（scope+link）或旧路径（bodyAttr/htmlAttr）；hooks 标记仅作补充
+        # （无 hooks 的纯 CSS/提取单元合法地没有 hooks 挂载）。
+        activated = engine_active(s) or (s["bodyAttr"] is not None and s["htmlAttr"] is not None)
+        check("皮肤激活（引擎 scope/link 或旧 bodyAttr）+ 背景层匹配皮肤类型", activated and bg_ok,
+              f"skin={s.get('skinAttr')} engineLinks={s.get('engineLinks')} layer={s.get('engineLayer')} hooks={str(s.get('hooks'))} body={s.get('bodyAttr')} bg=" + str(s.get("bg"))[:40])
         diag = page.evaluate("(cssp) => { const st = document.getElementById('dsh-ui-skins-style'); const txt = st ? (st.textContent || '') : ''; const attr = document.documentElement.getAttribute('data-dsh-skin') || document.documentElement.getAttribute('data-ui-pack'); const val = getComputedStyle(document.documentElement).getPropertyValue(cssp); const nRules = Array.from(document.styleSheets).reduce((n, sh) => { try { return n + (sh.cssRules || []).length } catch (e) { return n } }, 0); return JSON.stringify({ attr, val: val.slice(0, 24), styleLen: txt.length, probeInStyle: txt.includes(cssp), anchorInStyle: txt.includes('data-dsh-skin='), nRules }) }", CSS_PROBE)
         check("第三方作用域 CSS 生效（自定义属性非空）", bool(s["cssVar"]), s["cssVar"][:40] + " diag=" + str(diag))
         applied_cssval = s["cssVar"]
@@ -184,7 +203,9 @@ def main():
         page.wait_for_timeout(800)
         s = state(page)
         check("清除会话后回落工作区层 terminal", s["pack"] == "terminal", str(s["pack"]))
-        check("清除后 bodyAttr 回收", s["bodyAttr"] is None and s["htmlAttr"] is None)
+        check("清除后作用域回收（bodyAttr/htmlAttr/data-dsh-skin 全卸）",
+              s["bodyAttr"] is None and s["htmlAttr"] is None and s.get("skinAttr") is None,
+              f"skin={s.get('skinAttr')} engineLinks={s.get('engineLinks')}")
 
         # ---------- 5. 清除工作区覆盖 → 回落 dsh 层 ----------
         open_picker(page)

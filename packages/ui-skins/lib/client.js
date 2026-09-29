@@ -123,6 +123,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SkinRuntime = void 0;
 const theme_ts_1 = require("./theme.ts");
 const dispatcher_ts_1 = require("./dispatcher.ts");
+const index_ts_1 = require("./skin-engine/index.ts");
 class SkinRuntime {
     doc;
     ctx;
@@ -175,6 +176,7 @@ class SkinRuntime {
             }
             this.applied = envelope;
             (0, theme_ts_1.applySpecToDom)(this.doc, envelope.spec);
+            void syncEngineSkin(this.doc, envelope.spec);
             void syncHooks(this.doc, envelope.spec);
             this.overrides.apply(envelope.spec);
             for (const warning of envelope.spec.warnings)
@@ -201,6 +203,61 @@ class SkinRuntime {
     }
 }
 exports.SkinRuntime = SkinRuntime;
+// ---------------------------------------------------------------------------
+// 引擎渲染同步（A 路线）：externalSkinId 驱动官方 skin-controller 原子切换。
+// 引擎自带 latest-request-wins；此处只需把「当前目标用哪款皮肤」喂给它。
+// ---------------------------------------------------------------------------
+let engineActiveId = null;
+let engineSeq = 0;
+let engineCatalog = null;
+/** 防御性清扫：ledger 漏记的引擎样式表链接（残留会致清除后皮肤态不退出）。 */
+function sweepEngineLinks(doc, keepSkinId) {
+    for (const link of Array.from(doc.head.querySelectorAll('link[rel="stylesheet"]'))) {
+        const href = link.getAttribute('href') ?? '';
+        if (!href.includes('/external/v2/skins/'))
+            continue;
+        if (keepSkinId !== null && href.includes(`/external/v2/skins/${keepSkinId}/`))
+            continue;
+        link.remove();
+    }
+}
+async function syncEngineSkin(doc, spec) {
+    const next = spec.externalSkinId ?? null;
+    if (next === engineActiveId)
+        return;
+    const seq = ++engineSeq;
+    const controller = (0, index_ts_1.getSkinEngine)();
+    if (next === null) {
+        const result = await controller.switchTo(null, null);
+        if (seq === engineSeq) {
+            engineActiveId = result;
+            sweepEngineLinks(doc, result);
+        }
+        return;
+    }
+    try {
+        if (!engineCatalog)
+            engineCatalog = await (0, index_ts_1.fetchEngineCatalog)();
+        let entry = engineCatalog.get(next) ?? null;
+        if (!entry) {
+            // 热收录后的新皮肤：重拉 catalog 一次。
+            engineCatalog = await (0, index_ts_1.fetchEngineCatalog)();
+            entry = engineCatalog.get(next) ?? null;
+        }
+        if (!entry) {
+            console.warn(`[ui-skins] 引擎 catalog 缺皮肤条目：${next}`);
+            return;
+        }
+        const result = await controller.switchTo(next, entry);
+        if (seq === engineSeq) {
+            engineActiveId = result;
+            sweepEngineLinks(doc, result);
+        }
+    }
+    catch (error) {
+        console.warn('[ui-skins] 引擎切换失败:', error);
+    }
+}
 // ---------------------------------------------------------------------------
 // 官方 hooks 契约挂载（x-org.linxin666.skin-center/v1alpha1）：
 // 模块加载不执行任何东西；apply(ctx) 拥有全部 DOM 写入并通过 ctx.onCleanup 登记回收。
@@ -258,6 +315,1685 @@ async function syncHooks(doc, spec) {
     catch {
         /* hooks 失败不拖垮皮肤基础层 */
     }
+}
+
+  },
+  "src/client/skin-engine/index.ts": function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ENGINE_API_BASE = void 0;
+exports.getSkinEngine = getSkinEngine;
+exports.fetchEngineCatalog = fetchEngineCatalog;
+/**
+ * skin-engine 客户端接线 —— 把 vendored 官方皮肤运行时（skin-controller /
+ * semantic-adapter / shell-rendering / decoration-layers / effect-ledger）挂进
+ * chameleon 的 SkinRuntime：
+ *
+ *   - 渲染语义与 dsh-web 皮肤中心一致：原子 activation（样式表 <link> → 背景
+ *     美术层 → hooks（完整 SkinHooksContext：六层装饰层 + theme 订阅）→ 翻
+ *     html[data-dsh-skin] → 回收上一 activation），外加 L2 语义打标与壳层渲染
+ *     适配；
+ *   - chameleon 只做编排：三级解析决定「哪个目标用哪款皮肤」，选择持久化由
+ *     绑定层（session/workspace/dsh）负责，故 engine 的 persist 槽为空操作；
+ *   - hooks 模块导入经 <script type="module"> + blob URL（静态 import 字面量，
+ *     永不被转译成 require(url)）。
+ */
+const effect_ledger_ts_1 = require("./effect-ledger.ts");
+const semantic_adapter_ts_1 = require("./semantic-adapter.ts");
+const shell_rendering_ts_1 = require("./shell-rendering.ts");
+const skin_controller_ts_1 = require("./skin-controller.ts");
+/** 引擎 v2 传输面（host：skin-engine/external-v2.ts）。 */
+exports.ENGINE_API_BASE = '/ui-skins/external/v2';
+let handle = null;
+/** hooks.mjs 动态模块导入（blob URL + module script；TS 转译安全）。 */
+async function importHooksModule(url) {
+    const res = await fetch(url);
+    if (!res.ok)
+        throw new Error(`hooks fetch ${url} -> ${res.status}`);
+    const text = await res.text();
+    const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+    try {
+        const done = new Promise((resolveDone) => {
+            const timer = setTimeout(resolveDone, 8000);
+            const onDone = () => {
+                clearTimeout(timer);
+                resolveDone();
+            };
+            window.addEventListener('uiskins-engine-hooks-ready', onDone, { once: true });
+        });
+        const holder = window;
+        holder.__uiSkinsEngineHooks = undefined;
+        const el = doc().createElement('script');
+        el.type = 'module';
+        // 字符串内静态 import —— 不会被任何转译步骤改写。
+        el.textContent =
+            `import * as m from ${JSON.stringify(blobUrl)};` +
+                `window.__uiSkinsEngineHooks = m;` +
+                `window.dispatchEvent(new Event('uiskins-engine-hooks-ready'));`;
+        doc().head.appendChild(el);
+        await done;
+        el.remove();
+        return holder.__uiSkinsEngineHooks;
+    }
+    finally {
+        URL.revokeObjectURL(blobUrl);
+    }
+}
+function doc() {
+    return document;
+}
+/** 每文档单例：装饰层/语义打标/壳层适配都是组件级，随文档存活。 */
+function getSkinEngine() {
+    if (handle)
+        return handle.controller;
+    const d = doc();
+    const deps = {
+        doc: d,
+        ledger: (0, effect_ledger_ts_1.createEffectLedger)(),
+        apiBase: exports.ENGINE_API_BASE,
+        importHooks: importHooksModule,
+        // 选择持久化归 chameleon 三级绑定层（session/workspace/dsh），引擎只管渲染。
+        persist: async () => { },
+        onError: (message, error) => {
+            console.warn('[skin-engine]', message, error);
+        },
+    };
+    const controller = (0, skin_controller_ts_1.createSkinController)(deps);
+    const adapter = (0, semantic_adapter_ts_1.createSemanticAdapter)(d);
+    adapter.start();
+    const disposeShell = (0, shell_rendering_ts_1.installShellRenderingAdapter)(d);
+    handle = { controller, adapter, disposeShell };
+    return controller;
+}
+/** 拉取引擎 catalog（skinId → 控制器条目）；host 在收编时已做安全管线验证。 */
+async function fetchEngineCatalog() {
+    const res = await fetch(`${exports.ENGINE_API_BASE}/catalog`);
+    if (!res.ok)
+        throw new Error(`engine catalog -> ${res.status}`);
+    const rows = (await res.json());
+    const map = new Map();
+    for (const row of rows) {
+        if (row?.manifest?.id)
+            map.set(row.manifest.id, { manifest: row.manifest });
+    }
+    return map;
+}
+
+  },
+  "src/client/skin-engine/skin-controller.ts": function (module, exports, require) {
+"use strict";
+/**
+ * Skin runtime controller (issue #506, contract section 8) — the browser
+ * switch engine. One switch is one NEW activation identity:
+ *
+ *   switchTo(id):
+ *     1. seq = ++latestRequest          (latest-request-wins)
+ *     2. activation = ledger.beginActivation()
+ *     3. fetch stylesheet (+ patches)   (already scoped + whitelisted host-side)
+ *     4. install <style> tags, background media, hooks (all ledger-recorded)
+ *     5. if seq is stale -> dispose this activation and bail
+ *     6. flip html[data-dsh-skin]       (the atomic visual cut)
+ *     7. dispose the previous activation
+ *     8. persist the selection
+ *
+ * Every step before the flip is discardable; a stale or failed switch leaves
+ * the previous skin fully intact. hooks import/apply errors are caught: the
+ * static part (stylesheet, media) stays active — the escape hatch can never
+ * take the skin down with it.
+ *
+ * lifecycleScope split: the ledger tracks activation scope; the catalog
+ * snapshot, the decoration layer elements and the persisted selection are
+ * component scope and survive every switch.
+ * @module @linxin666/dsh-client-ui-skin-center/runtime/skin-controller
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createSkinController = createSkinController;
+const decoration_layers_ts_1 = require("./decoration-layers.ts");
+const backdrop_scene_ts_1 = require("./backdrop-scene.ts");
+function createSkinController(deps) {
+    const doc = deps.doc;
+    const ledger = deps.ledger;
+    const apiBase = deps.apiBase ?? '/api/skin-center/v2';
+    const fetchImpl = deps.fetchImpl ?? fetch.bind(doc.defaultView);
+    const layers = (0, decoration_layers_ts_1.ensureDecorationLayers)(doc);
+    const onError = deps.onError ?? (() => { });
+    const themeGet = deps.themeGet ?? (() => (doc.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'));
+    const themeSubscribe = deps.themeSubscribe ?? ((listener) => {
+        let last = themeGet();
+        const observer = new doc.defaultView.MutationObserver(() => {
+            const next = themeGet();
+            if (next !== last) {
+                last = next;
+                listener(next);
+            }
+        });
+        if (doc.body)
+            observer.observe(doc.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] });
+        return () => observer.disconnect();
+    });
+    /**
+     * Re-paint the current activation's background media for the live
+     * light/dark theme (the controller owns the layer, so a theme flip must
+     * swap the variant the same way an activation does). No-op when there is
+     * nothing painted or the manifest carries no backgroundMedia.
+     */
+    function repaintBackgroundForTheme() {
+        if (active === null || currentActivation === null || lastEntry === null)
+            return;
+        const media = lastEntry.manifest.contributes.backgroundMedia;
+        if (!media)
+            return;
+        if (deps.suppressBackgroundMedia?.() === true)
+            return;
+        const variant = themeGet() === 'dark' ? (media.dark ?? media.light) : (media.light ?? media.dark);
+        if (!variant)
+            return;
+        const assetBase = `${apiBase}/skins/${lastEntry.manifest.id}`;
+        setBackgroundLayer(currentActivation, (0, decoration_layers_ts_1.buildBackgroundMedia)(doc, variant, assetBase));
+    }
+    const unsubscribeTheme = themeSubscribe(() => repaintBackgroundForTheme());
+    const loadStylesheet = deps.loadStylesheet ?? ((href) => new Promise((resolveLink, rejectLink) => {
+        const link = doc.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = href;
+        const timer = setTimeout(() => rejectLink(new Error(`stylesheet load timeout: ${href}`)), 15000);
+        link.onload = () => { clearTimeout(timer); resolveLink(); };
+        link.onerror = () => { clearTimeout(timer); rejectLink(new Error(`stylesheet load failed: ${href}`)); };
+        doc.head.appendChild(link);
+    }));
+    let latestRequest = 0;
+    let currentActivation = null;
+    const initialSkinId = doc.documentElement?.getAttribute('data-dsh-skin') || null;
+    let active = initialSkinId;
+    /** The committed selection try-on restores (component scope). */
+    let committed = { id: initialSkinId, entry: null };
+    /** Last non-null applied entry, so refresh() can re-activate it. */
+    let lastEntry = null;
+    /** Last evaluated background-suppression verdict (refresh() skips no-ops). */
+    let lastSuppressed = deps.suppressBackgroundMedia?.() === true;
+    let trying = null;
+    let previewing = false;
+    const listeners = new Set();
+    // React's useSyncExternalStore requires a CACHED snapshot: getSnapshot must
+    // return the same reference until the state actually changes, or the store
+    // consumer loops forever (and the settings card crashes blank).
+    let stateSnapshot = { active: initialSkinId, trying: null, previewing: false };
+    const emit = () => {
+        stateSnapshot = { active, trying, previewing };
+        for (const listener of listeners)
+            listener();
+    };
+    /**
+     * Install one stylesheet as a tracked <link> (the load itself happened in
+     * loadStylesheet; here we only register the teardown). Links keep relative
+     * url() resolution intact — a <style> tag would resolve them against the
+     * document and 404 every skin asset.
+     */
+    function trackStylesheet(activation, label, href) {
+        const link = doc.head.querySelector(`link[href="${href}"]`);
+        ledger.record(activation, `style:${label}`, () => link?.remove());
+    }
+    /**
+     * Paint the skin background art into the `background` decoration layer
+     * (z-index:-2) with a snapshot for the activation ledger. Only the CURRENT
+     * activation may restore: when an older activation is disposed after a
+     * newer one already re-painted the layer, restoring its snapshot would
+     * clobber the newer paint.
+     *
+     * Two reasons the art lives in the layer, not on `document.body`:
+     *  - Chromium's backdrop-filter does not sample the canvas/body background,
+     *    so the skin-center blur layer (z-index:-1) could never blur body-painted
+     *    art (issue #732 defect A). A real fixed element IS sampled, so after
+     *    this change the same blur + scrim controls work on the skin backdrop
+     *    just like they already do on the Wallpaper Engine layers (issue #777).
+     *  - dragon-heir hooks expect the art in ctx.layers.background (they swap
+     *    the painted img and apply the v1 filter lift); the layer is the v2
+     *    contract and body painting was a leftover half-migration.
+     * The body's own opaque background is forced transparent while art is
+     * mounted, or the shell's static panels would cover the negative-z layer.
+     */
+    function setBackgroundLayer(activation, nodes) {
+        const style = doc.body.style;
+        const previousBackgroundColor = style.getPropertyValue('background-color');
+        const previousBackgroundImage = style.getPropertyValue('background-image');
+        const restore = () => {
+            if (currentActivation !== activation)
+                return;
+            (0, decoration_layers_ts_1.clearLayer)(layers.background);
+            (0, backdrop_scene_ts_1.setSceneBackdropActive)(doc, 'skin', false);
+            if (previousBackgroundColor === '')
+                style.removeProperty('background-color');
+            else
+                style.setProperty('background-color', previousBackgroundColor);
+            if (previousBackgroundImage === '')
+                style.removeProperty('background-image');
+            else
+                style.setProperty('background-image', previousBackgroundImage);
+        };
+        (0, decoration_layers_ts_1.clearLayer)(layers.background);
+        if (nodes.length > 0) {
+            for (const node of nodes)
+                layers.background.appendChild(node);
+            style.setProperty('background-color', 'transparent');
+            style.setProperty('background-image', 'none');
+            (0, backdrop_scene_ts_1.setSceneBackdropActive)(doc, 'skin', true);
+        }
+        else {
+            (0, backdrop_scene_ts_1.setSceneBackdropActive)(doc, 'skin', false);
+            if (previousBackgroundColor === '')
+                style.removeProperty('background-color');
+            else
+                style.setProperty('background-color', previousBackgroundColor);
+            if (previousBackgroundImage === '')
+                style.removeProperty('background-image');
+            else
+                style.setProperty('background-image', previousBackgroundImage);
+        }
+        ledger.record(activation, 'background:layer', restore);
+    }
+    function installBackground(activation, entry) {
+        const media = entry.manifest.contributes.backgroundMedia;
+        if (!media) {
+            setBackgroundLayer(activation, []);
+            return;
+        }
+        // WE wallpaper > user manual background > skin manifest background.
+        if (deps.suppressBackgroundMedia?.() === true) {
+            setBackgroundLayer(activation, []);
+            return;
+        }
+        const variant = themeGet() === 'dark' ? (media.dark ?? media.light) : (media.light ?? media.dark);
+        if (!variant) {
+            setBackgroundLayer(activation, []);
+            return;
+        }
+        const assetBase = `${apiBase}/skins/${entry.manifest.id}`;
+        setBackgroundLayer(activation, (0, decoration_layers_ts_1.buildBackgroundMedia)(doc, variant, assetBase));
+    }
+    async function installHooks(activation, entry) {
+        const facet = entry.manifest.facets?.client;
+        if (!facet)
+            return;
+        const importHooks = deps.importHooks ?? ((url) => Promise.resolve(`${url}`).then(s => __importStar(require(s))));
+        try {
+            const mod = (await importHooks(`${apiBase}/skins/${entry.manifest.id}/hooks.mjs`));
+            const factory = mod?.default;
+            if (typeof factory !== 'function')
+                throw new Error('hooks.mjs must default-export defineSkinHooks()');
+            const hooks = factory();
+            if (typeof hooks?.apply !== 'function')
+                throw new Error('defineSkinHooks() must return { apply }');
+            const cleanups = [];
+            const ctx = {
+                skinId: entry.manifest.id,
+                scopeAttr: entry.manifest.id,
+                assetBase: `${apiBase}/skins/${entry.manifest.id}`,
+                layers,
+                theme: {
+                    get: themeGet,
+                    subscribe: themeSubscribe,
+                },
+                onCleanup: (fn) => {
+                    cleanups.push(fn);
+                },
+            };
+            hooks.apply(ctx);
+            ledger.record(activation, 'hooks', () => {
+                try {
+                    hooks.dispose?.();
+                }
+                catch (error) {
+                    onError(`hooks dispose failed for ${entry.manifest.id}`, error);
+                }
+                for (const cleanup of cleanups.reverse()) {
+                    try {
+                        cleanup();
+                    }
+                    catch (error) {
+                        onError(`hooks cleanup failed for ${entry.manifest.id}`, error);
+                    }
+                }
+            });
+        }
+        catch (error) {
+            // The escape hatch never takes the static skin down with it.
+            onError(`hooks failed for ${entry.manifest.id}; static skin stays active`, error);
+        }
+    }
+    async function persist(id) {
+        if (deps.persist) {
+            await deps.persist(id);
+            return;
+        }
+        await fetchImpl(`${apiBase}/active`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ active: id }),
+        });
+    }
+    async function switchInternal(id, entry, shouldPersist) {
+        const seq = ++latestRequest;
+        const activation = ledger.beginActivation();
+        try {
+            if (id !== null && entry !== null) {
+                const stylesheetHref = `${apiBase}/skins/${id}/stylesheet`;
+                const patchesHref = entry.manifest.contributes.patches !== undefined
+                    ? `${apiBase}/skins/${id}/patches`
+                    : null;
+                await loadStylesheet(stylesheetHref);
+                trackStylesheet(activation, 'stylesheet', stylesheetHref);
+                if (patchesHref !== null) {
+                    await loadStylesheet(patchesHref).catch(() => { });
+                    trackStylesheet(activation, 'patches', patchesHref);
+                }
+                if (seq !== latestRequest)
+                    throw new StaleSwitch();
+                installBackground(activation, entry);
+                await installHooks(activation, entry);
+            }
+            else {
+                // Stock / entryless switch owns the background layer too: it must
+                // clear a previous skin's paint (the old activation's restore is
+                // skipped as stale by the ownership gate).
+                setBackgroundLayer(activation, []);
+            }
+            if (seq !== latestRequest)
+                throw new StaleSwitch();
+            // The atomic cut: attribute first, then retire the old activation.
+            if (id === null)
+                doc.documentElement.removeAttribute('data-dsh-skin');
+            else
+                doc.documentElement.setAttribute('data-dsh-skin', id);
+            const previous = currentActivation;
+            currentActivation = activation;
+            active = id;
+            if (entry !== null)
+                lastEntry = entry;
+            if (shouldPersist) {
+                committed = { id, entry };
+                trying = null;
+                previewing = false;
+            }
+            else {
+                previewing = id !== committed.id;
+                trying = previewing ? id : null;
+            }
+            emit();
+            if (previous !== null)
+                ledger.disposeActivation(previous);
+            if (shouldPersist) {
+                await persist(id).catch((error) => onError('failed to persist the skin selection', error));
+            }
+            return active;
+        }
+        catch (error) {
+            ledger.disposeActivation(activation);
+            if (error instanceof StaleSwitch)
+                return active;
+            if (currentActivation === null) {
+                active = null;
+                committed = { id: null, entry: null };
+                doc.documentElement.removeAttribute('data-dsh-skin');
+                emit();
+            }
+            onError(`switch to ${id ?? 'stock'} failed; previous skin intact`, error);
+            return active;
+        }
+    }
+    return {
+        get active() {
+            return active;
+        },
+        get layers() {
+            return layers;
+        },
+        async switchTo(id, entry) {
+            return await switchInternal(id, entry, true);
+        },
+        async tryOn(id, entry) {
+            return await switchInternal(id, entry, false);
+        },
+        async exitTryOn() {
+            const result = await switchInternal(committed.id, committed.entry, false);
+            return result;
+        },
+        subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+        },
+        getState() {
+            return stateSnapshot;
+        },
+        async refresh() {
+            const suppressed = deps.suppressBackgroundMedia?.() === true;
+            if (suppressed === lastSuppressed)
+                return active;
+            lastSuppressed = suppressed;
+            const id = active;
+            if (id !== null && lastEntry === null) {
+                return active;
+            }
+            return await switchInternal(id, id === null ? null : lastEntry, false);
+        },
+        shutdown() {
+            latestRequest += 1;
+            unsubscribeTheme();
+            if (currentActivation !== null) {
+                ledger.disposeActivation(currentActivation);
+                currentActivation = null;
+            }
+            active = null;
+            trying = null;
+            previewing = false;
+            committed = { id: null, entry: null };
+            emit();
+            doc.documentElement.removeAttribute('data-dsh-skin');
+        },
+    };
+}
+class StaleSwitch extends Error {
+    constructor() {
+        super('superseded by a newer switch');
+    }
+}
+
+  },
+  "src/client/skin-engine/backdrop-scene.ts": function (module, exports, require) {
+"use strict";
+/**
+ * Unified "backdrop visible" scene marker (issue #777).
+ *
+ * A skin with painted background media or a mounted Wallpaper Engine
+ * wallpaper both put real backdrop art behind the app. The two runtime
+ * controllers (skin-controller and wallpaper) report their mount state
+ * through setSceneBackdropActive(); this module folds them into ONE body /
+ * html marker `data-dsh-backdrop-active` and installs the shared composer
+ * seat neutralizer that keys on it.
+ *
+ * The shell's active composer seat paints a bottom occlusion gradient under
+ * the sticky input card (rc.8: a linear gradient to --dsw-alias-bg-base,
+ * z-index 7). Backdrop scenes intentionally remove that seat-wide gradient in
+ * both active and hero phases so wallpaper art remains unobstructed down to the
+ * viewport edge. Skin-provided seat-wide ::before masks are neutralized too.
+ * Composer task/statistics surfaces are styled by the shared shell adapter
+ * from skin theme tokens, not by this scene layer.
+ *
+ * The input card itself ([data-composer-card], the official shell's stable card
+ * anchor) keeps its translucent tint and gains the configurable backdrop blur
+ * (default INPUT_FROST_BLUR_PX).
+ *
+ * The card rule is enabled only while the conversation actually has message
+ * content (data-dsh-conversation-content): an empty conversation has no正文 to
+ * occlude, so the input keeps its normal hero appearance without a frost flash.
+ * The strength is provided by --dsh-input-card-blur and falls back to the
+ * compatibility default when the setting has not loaded yet.
+ *
+ * The marker is body/html level (managed outside the surface/part/plugin
+ * enum, see contracts/semantic-attrs-v1.md) and survives a neutralizer
+ * teardown; the style is inert whenever the marker is absent.
+ * @module @linxin666/dsh-client-ui-skin-center/runtime/backdrop-scene
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.INPUT_FROST_BLUR_PX = exports.CONVERSATION_CONTENT_ATTR = exports.COMPOSER_FROST_ATTR = exports.SCENE_NEUTRALIZER_ATTR = exports.BACKDROP_ACTIVE_ATTR = void 0;
+exports.setSceneBackdropActive = setSceneBackdropActive;
+exports.ensureSceneNeutralizer = ensureSceneNeutralizer;
+exports.syncComposerFrost = syncComposerFrost;
+/** Shared marker: set on html + body while a source reports backdrop art. */
+exports.BACKDROP_ACTIVE_ATTR = 'data-dsh-backdrop-active';
+/** The shared composer-seat neutralizer style's own attribute. */
+exports.SCENE_NEUTRALIZER_ATTR = 'data-dsh-scene-neutralizer';
+/**
+ * Attribute of the composer frost follower: a body-level, fixed, empty element
+ * sized to the input card's border box while a scene is active.
+ *
+ * It exists because the frost must NOT be painted on the card. A non-none
+ * backdrop-filter (like transform, filter, contain or perspective) makes an
+ * element the CONTAINING BLOCK for its fixed-position descendants, and the
+ * official shell renders its tooltips inside the composer card: the composer
+ * send arrow's bubble is position: fixed, so with the frost on the card it
+ * resolved its viewport coordinates against the card, landed far outside it
+ * but still inside the conversation scrollport, added its own height to
+ * scrollHeight, and every hover clamped the scroll to the new bottom — the
+ * whole conversation jumped by hundreds of pixels and snapped back on the
+ * next frame (issue #1724). Documented throughout the catalog skins as the
+ * reason a card ancestor never carries a filter.
+ *
+ * A body-level sibling is not an ancestor of the card, so it may carry the
+ * blur; because nested backdrop-filters do not compose, the card itself must
+ * stay filter-free for the follower's blur to read through its translucent
+ * fill. The element is empty and pointer-events:none, and it is a sibling of
+ * the app root, never inside the scrollport.
+ */
+exports.COMPOSER_FROST_ATTR = 'data-dsh-composer-frost';
+/** Stacking rung of the follower: above the skin art layers, below the shell. */
+const COMPOSER_FROST_Z_INDEX = '-1';
+/** Conversation-content marker: set while the active conversation has rows. */
+exports.CONVERSATION_CONTENT_ATTR = 'data-dsh-conversation-content';
+/**
+ * Stable shell scrollport scoped row selectors. Official builds emit the chat
+ * anchor; the CSS-module suffix fallbacks retain compatibility with older
+ * shells without returning to a body-wide topic/session query.
+ */
+const ACTIVE_CONVERSATION_CONTENT_SELECTOR = [
+    '[data-conversation-scroll] [data-chat-anchor-key]',
+    '[data-conversation-scroll] [class*="_userRow"]',
+    '[data-conversation-scroll] [class*="_compactionRow"]',
+    '[data-conversation-scroll] [class*="_contextRow"]',
+    '[data-conversation-scroll] [class*="_turnErrorRow"]',
+].join(', ');
+/** Compatibility default for the input-card backdrop blur strength (px). */
+exports.INPUT_FROST_BLUR_PX = 10;
+const sourceSets = new WeakMap();
+const contentObservers = new WeakMap();
+const contentFrames = new WeakMap();
+/** Write a marker attribute only when the desired state is not applied yet. */
+function applyMarker(el, attr, active) {
+    if (el === null)
+        return;
+    if (active) {
+        if (el.getAttribute(attr) !== 'true')
+            el.setAttribute(attr, 'true');
+        return;
+    }
+    if (el.hasAttribute(attr))
+        el.removeAttribute(attr);
+}
+/**
+ * Report one source's backdrop-art presence. The marker stays on while any
+ * source is active, so the skin and wallpaper controllers never clobber each
+ * other across their mount/unmount cycles.
+ */
+function setSceneBackdropActive(doc, source, active) {
+    let sources = sourceSets.get(doc);
+    if (sources === undefined) {
+        sources = new Set();
+        sourceSets.set(doc, sources);
+    }
+    if (active)
+        sources.add(source);
+    else
+        sources.delete(source);
+    syncMarker(doc, sources);
+}
+/** Reflect the source set onto html/body and ensure the neutralizer on use. */
+function syncMarker(doc, sources) {
+    const active = sources.size > 0;
+    applyMarker(doc.body, exports.BACKDROP_ACTIVE_ATTR, active);
+    applyMarker(doc.documentElement, exports.BACKDROP_ACTIVE_ATTR, active);
+    if (active) {
+        ensureSceneNeutralizer(doc);
+        startContentObserver(doc);
+    }
+    else {
+        stopContentObserver(doc);
+    }
+    // The frost gate is the marker pair, so every path that changes either one
+    // re-evaluates it: a scene mount/unmount, and the conversation-content flip
+    // the observer above reports.
+    syncComposerFrost(doc);
+}
+/**
+ * Track whether the active conversation scrollport has message rows for the
+ * frost gate. Topic pickers and outgoing session trees can retain their own
+ * data-chat-anchor-key nodes during a switch; a body-wide query would count
+ * those stale rows and flash the composer frost over the new empty topic.
+ */
+function updateConversationContent(doc) {
+    const has = doc.body !== null && doc.body.querySelector(ACTIVE_CONVERSATION_CONTENT_SELECTOR) !== null;
+    applyMarker(doc.body, exports.CONVERSATION_CONTENT_ATTR, has);
+    applyMarker(doc.documentElement, exports.CONVERSATION_CONTENT_ATTR, has);
+    // The composer frost is gated on this marker, so the flip must reach it.
+    syncComposerFrost(doc);
+}
+/**
+ * Coalesce the mutation bursts of a streaming conversation into one content
+ * check per frame; a check scheduled for a document that stopped observing is
+ * dropped so a late frame can never re-add the marker after teardown.
+ */
+function scheduleConversationContent(doc) {
+    if (contentFrames.has(doc))
+        return;
+    const win = doc.defaultView;
+    if (win === null || typeof win.requestAnimationFrame !== 'function') {
+        updateConversationContent(doc);
+        return;
+    }
+    contentFrames.set(doc, win.requestAnimationFrame(() => {
+        contentFrames.delete(doc);
+        if (!contentObservers.has(doc))
+            return;
+        updateConversationContent(doc);
+    }));
+}
+/** Observe the conversation tree while a backdrop is visible. */
+function startContentObserver(doc) {
+    if (contentObservers.has(doc))
+        return;
+    updateConversationContent(doc);
+    const win = doc.defaultView;
+    if (win === null || typeof win.MutationObserver !== 'function')
+        return;
+    const observer = new win.MutationObserver(() => scheduleConversationContent(doc));
+    observer.observe(doc.body ?? doc.documentElement, { childList: true, subtree: true });
+    contentObservers.set(doc, observer);
+}
+/** Stop the content observer, cancel pending work and drop the marker. */
+function stopContentObserver(doc) {
+    const frame = contentFrames.get(doc);
+    if (frame !== undefined) {
+        const win = doc.defaultView;
+        if (win !== null && typeof win.cancelAnimationFrame === 'function')
+            win.cancelAnimationFrame(frame);
+        contentFrames.delete(doc);
+    }
+    const observer = contentObservers.get(doc);
+    if (observer !== undefined) {
+        observer.disconnect();
+        contentObservers.delete(doc);
+    }
+    applyMarker(doc.body, exports.CONVERSATION_CONTENT_ATTR, false);
+    applyMarker(doc.documentElement, exports.CONVERSATION_CONTENT_ATTR, false);
+    syncComposerFrost(doc);
+}
+/**
+ * Install the shared composer-seat neutralizer, keyed by head presence so a
+ * cleared head (tests) or a re-mount re-creates it. Without the marker the
+ * rules are inert, so the style can outlive a single mount without changing
+ * any other look.
+ *
+ * The composer card is deliberately absent from this sheet: its frost rides
+ * {@link COMPOSER_FROST_ATTR} instead, because no rule here may put a
+ * containing-block property back on the card (issue #1724).
+ */
+function ensureSceneNeutralizer(doc) {
+    if (doc.head === null)
+        return;
+    if (doc.head.querySelector(`style[${exports.SCENE_NEUTRALIZER_ATTR}]`) !== null)
+        return;
+    const style = doc.createElement('style');
+    style.setAttribute(exports.SCENE_NEUTRALIZER_ATTR, '');
+    style.textContent = `
+    html[data-dsh-backdrop-active] [data-composer-seat],
+    html[data-dsh-backdrop-active] [data-composer-seat]::before {
+      background: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    html[data-dsh-backdrop-active][data-dsh-conversation-content] [${exports.COMPOSER_FROST_ATTR}] {
+      backdrop-filter: blur(var(--dsh-input-card-blur, ${exports.INPUT_FROST_BLUR_PX}px)) !important;
+      -webkit-backdrop-filter: blur(var(--dsh-input-card-blur, ${exports.INPUT_FROST_BLUR_PX}px)) !important;
+    }
+  `;
+    doc.head.appendChild(style);
+}
+const frostFollowers = new WeakMap();
+/** The composer card the frost tracks, or null while none is mounted. */
+function composerCardOf(doc) {
+    return doc.body === null ? null : doc.body.querySelector('[data-composer-card]');
+}
+/**
+ * Create the follower on first use and keep it sized to the composer card.
+ *
+ * The element is empty, fixed and inert: it paints nothing of its own, and it
+ * receives no pointer events, so it can never take a tap from the composer or
+ * the sidebar. Sizing uses one measure per animation frame (the shape
+ * shell-rendering.ts uses for the composer height) rather than a per-mutation
+ * read, and writes only when the box actually changed.
+ */
+function syncFrostFollower(doc) {
+    const follower = frostFollowers.get(doc);
+    if (follower === undefined)
+        return;
+    const card = composerCardOf(doc);
+    if (card === null)
+        return;
+    // A conversation switch replaces the composer card; move the observation to
+    // the node we now track (this runs inside the coalesced content check).
+    if (follower.observed !== card) {
+        if (follower.observed !== null)
+            follower.resizeObserver?.unobserve(follower.observed);
+        follower.observed = card;
+        follower.resizeObserver?.observe(card);
+        follower.applied = '';
+    }
+    const rect = card.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0)
+        return;
+    // The follower paints the card's own shape, including a skin's radius
+    // override, so the blurred region never reads as a rectangle behind a
+    // rounded card. Read per apply: a skin may change it after mount.
+    const radius = doc.defaultView?.getComputedStyle(card).borderRadius ?? '';
+    const box = [rect.top, rect.left, rect.width, rect.height, radius]
+        .map((value) => typeof value === 'number' ? Math.round(value) : value)
+        .join('|');
+    if (box === follower.applied)
+        return;
+    follower.applied = box;
+    const style = follower.el.style;
+    style.top = `${Math.round(rect.top)}px`;
+    style.left = `${Math.round(rect.left)}px`;
+    style.width = `${Math.round(rect.width)}px`;
+    style.height = `${Math.round(rect.height)}px`;
+    style.borderRadius = radius;
+}
+/** Coalesce a burst of geometry changes into one measurement per frame. */
+function scheduleFrostSync(doc) {
+    const follower = frostFollowers.get(doc);
+    if (follower === undefined || follower.frame !== null)
+        return;
+    const win = doc.defaultView;
+    if (win === null || typeof win.requestAnimationFrame !== 'function') {
+        syncFrostFollower(doc);
+        return;
+    }
+    follower.frame = win.requestAnimationFrame(() => {
+        follower.frame = null;
+        if (!frostFollowers.has(doc))
+            return;
+        syncFrostFollower(doc);
+    });
+}
+/** Mount the follower while a scene is visible and start tracking the card. */
+function startFrostFollower(doc) {
+    if (frostFollowers.has(doc) || doc.body === null)
+        return;
+    const el = doc.createElement('div');
+    el.setAttribute(exports.COMPOSER_FROST_ATTR, '');
+    el.setAttribute('aria-hidden', 'true');
+    const style = el.style;
+    style.position = 'fixed';
+    style.pointerEvents = 'none';
+    style.zIndex = COMPOSER_FROST_Z_INDEX;
+    style.borderRadius = 'inherit';
+    const follower = { el, resizeObserver: null, observed: null, onResize: null, frame: null, applied: '' };
+    // A body-level sibling, appended after the app root so the shell's own
+    // layers (and any skin decoration) keep their place; the rung above decides
+    // paint order, not the append position.
+    doc.body.appendChild(el);
+    frostFollowers.set(doc, follower);
+    const win = doc.defaultView;
+    if (win !== null && typeof win.ResizeObserver === 'function') {
+        follower.resizeObserver = new win.ResizeObserver(() => scheduleFrostSync(doc));
+    }
+    if (win !== null && typeof win.addEventListener === 'function') {
+        follower.onResize = () => scheduleFrostSync(doc);
+        win.addEventListener('resize', follower.onResize);
+    }
+    syncFrostFollower(doc);
+}
+/** Remove the follower and stop every loop that fed it. */
+function stopFrostFollower(doc) {
+    const follower = frostFollowers.get(doc);
+    if (follower === undefined)
+        return;
+    frostFollowers.delete(doc);
+    const win = doc.defaultView;
+    // Cancel whatever is queued BEFORE the element goes: a frame that still held
+    // a reference would otherwise re-apply a box to a detached node.
+    if (follower.frame !== null && win !== null && typeof win.cancelAnimationFrame === 'function') {
+        win.cancelAnimationFrame(follower.frame);
+        follower.frame = null;
+    }
+    follower.resizeObserver?.disconnect();
+    follower.resizeObserver = null;
+    if (follower.onResize !== null) {
+        win?.removeEventListener('resize', follower.onResize);
+        follower.onResize = null;
+    }
+    follower.el.remove();
+}
+/**
+ * Attach the composer frost to the current scene state. Called from the shared
+ * marker sync so the follower exists exactly while a backdrop is visible and
+ * the conversation has content — the same gate the card's old frost rule used.
+ *
+ * The follower tracks the card through a ResizeObserver on the card itself and
+ * one interval-free re-schedule on every re-mount, so a conversation switch
+ * that replaces the composer keeps the frost aligned without a polling loop.
+ */
+function syncComposerFrost(doc) {
+    const wanted = doc.body !== null && doc.body.hasAttribute(exports.BACKDROP_ACTIVE_ATTR)
+        && doc.body.hasAttribute(exports.CONVERSATION_CONTENT_ATTR);
+    if (!wanted) {
+        stopFrostFollower(doc);
+        return;
+    }
+    startFrostFollower(doc);
+}
+
+  },
+  "src/client/skin-engine/decoration-layers.ts": function (module, exports, require) {
+"use strict";
+/**
+ * Fixed decoration layers (issue #506, contract section 6).
+ *
+ * Six skin-center-owned, non-interactive containers mounted once per
+ * document (component scope): background / ambient / top / bottom / sidebar /
+ * foreground. Skins fill them per activation (background media, scrims,
+ * strips); the CONTENT is activation scope — on every switch the controller
+ * replaces it through the effect ledger.
+ *
+ * Guarantees:
+ *  - pointer-events: none always (decoration must never eat clicks);
+ *  - the layer elements themselves survive skin switches, reloads of the
+ *    skin runtime, and HMR (ensure* is idempotent);
+ *  - stacking stays below the official shell overlay: background/ambient sit
+ *    behind the app, the strip/foreground layers use moderate z-indices that
+ *    lose to dialogs/overlays (official overlay paints above 1000);
+ *  - the background layer carries its own compositor layer (will-change:
+ *    transform): a full-viewport skin background image is expensive to
+ *    re-rasterize, and without isolation Chromium re-rasterizes it in
+ *    horizontal bands whenever unrelated repaint bursts (streaming chat,
+ *    animated pets, overlay menus) invalidate the same area — visible as
+ *    vertical band flicker (issue #1013).
+ * @module @linxin666/dsh-client-ui-skin-center/runtime/decoration-layers
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DECORATION_LAYER_NAMES = void 0;
+exports.ensureDecorationLayers = ensureDecorationLayers;
+exports.setLayerContent = setLayerContent;
+exports.clearLayer = clearLayer;
+exports.buildBackgroundMedia = buildBackgroundMedia;
+exports.DECORATION_LAYER_NAMES = [
+    'background',
+    'ambient',
+    'top',
+    'bottom',
+    'sidebar',
+    'foreground',
+];
+const LAYER_ATTR = 'data-dsh-skin-layer';
+/**
+ * Per-layer paint order. The background sits at -2: negative z-index
+ * elements paint ABOVE the html/body backgrounds (so a skin's own opaque
+ * root background-color renders BEHIND its art — the v1 layering) yet below
+ * every panel surface. It shares -2 with the WE scrim, which never paints
+ * at the same time (an active WE wallpaper suppresses skin media, enforced
+ * by the controller). The skin-background blur veil (-1) still samples the
+ * art above it. Ambient effects paint above the veils; the strip/foreground
+ * layers stay below the official overlay band (>=1000).
+ */
+const LAYER_STYLE = {
+    // Explicit longhands only: the inset shorthand has burned us once (a
+    // mid-session layer lost its bottom edge), longhands parse everywhere.
+    background: 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:-2;pointer-events:none;will-change:transform;',
+    ambient: 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:30;pointer-events:none;',
+    top: 'position:fixed;top:0;left:0;right:0;z-index:40;pointer-events:none;',
+    bottom: 'position:fixed;bottom:0;left:0;right:0;z-index:40;pointer-events:none;',
+    sidebar: 'position:fixed;top:0;bottom:0;left:0;z-index:40;pointer-events:none;',
+    foreground: 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:41;pointer-events:none;',
+};
+function ensureOne(doc, name) {
+    const existing = doc.querySelector(`[${LAYER_ATTR}="${name}"]`);
+    if (existing) {
+        // Never trust a previous writer's styles: re-assert invariants.
+        existing.style.cssText = LAYER_STYLE[name];
+        return existing;
+    }
+    const el = doc.createElement('div');
+    el.setAttribute(LAYER_ATTR, name);
+    el.setAttribute('aria-hidden', 'true');
+    el.style.cssText = LAYER_STYLE[name];
+    doc.body.appendChild(el);
+    return el;
+}
+/**
+ * Ensure all six layers exist and return their handles. Idempotent; safe to
+ * call on every activation.
+ */
+function ensureDecorationLayers(doc) {
+    return {
+        background: ensureOne(doc, 'background'),
+        ambient: ensureOne(doc, 'ambient'),
+        top: ensureOne(doc, 'top'),
+        bottom: ensureOne(doc, 'bottom'),
+        sidebar: ensureOne(doc, 'sidebar'),
+        foreground: ensureOne(doc, 'foreground'),
+    };
+}
+/**
+ * Replace one layer's content (activation scope). Returns a teardown that
+ * removes exactly the nodes this call added — idempotent, ledger-ready.
+ */
+function setLayerContent(layer, nodes) {
+    const added = [...nodes];
+    for (const node of added)
+        layer.appendChild(node);
+    let done = false;
+    return () => {
+        if (done)
+            return;
+        done = true;
+        for (const node of added)
+            node.parentNode?.removeChild(node);
+    };
+}
+/** Remove every node an activation left in a layer (used on dispose). */
+function clearLayer(layer) {
+    while (layer.firstChild)
+        layer.removeChild(layer.firstChild);
+}
+/**
+ * Build the background media element for a manifest backgroundMedia layer.
+ * Returns null when the theme variant has no media. The element fills the
+ * background layer; the scrim (when declared) is a sibling overlay.
+ */
+function buildBackgroundMedia(doc, layer, assetBase) {
+    const nodes = [];
+    const fullBleed = 'position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;object-fit:cover;';
+    if (layer.type === 'image') {
+        const img = doc.createElement('img');
+        img.src = `${assetBase}/${layer.src}`;
+        img.alt = '';
+        img.setAttribute('aria-hidden', 'true');
+        img.style.cssText = fullBleed;
+        nodes.push(img);
+    }
+    else {
+        const video = doc.createElement('video');
+        video.src = `${assetBase}/${layer.src}`;
+        video.muted = true;
+        video.loop = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.setAttribute('aria-hidden', 'true');
+        video.style.cssText = fullBleed;
+        nodes.push(video);
+    }
+    if (layer.scrim) {
+        const scrim = doc.createElement('div');
+        scrim.setAttribute('aria-hidden', 'true');
+        scrim.style.cssText = `position:absolute;inset:0;background:${layer.scrim};`;
+        nodes.push(scrim);
+    }
+    return nodes;
+}
+
+  },
+  "src/client/skin-engine/shell-rendering.ts": function (module, exports, require) {
+"use strict";
+/**
+ * Shared shell rendering corrections for every visual mode owned by the skin
+ * center (issue #954). The official shell exposes stable slot / composer
+ * anchors, while the workspace-list fade itself is still a CSS-module class.
+ * Keep that fallback scoped below sidebar.workspaces so an unrelated animation
+ * or overlay whose class contains "fade" is never affected.
+ *
+ * The stylesheet is inert for the stock look: a catalog skin, custom theme or
+ * wallpaper must be active. It is installed once per runtime and removed with
+ * that runtime, so disabling the plugin restores the shell unchanged.
+ * @module @linxin666/dsh-client-ui-skin-center/runtime/shell-rendering
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_COMPOSER_CLEARANCE_PX = exports.SHELL_RENDERING_STYLE_ATTR = void 0;
+exports.shellRenderingCss = shellRenderingCss;
+exports.installShellRenderingAdapter = installShellRenderingAdapter;
+/** Marker owned by the shared shell-rendering stylesheet. */
+exports.SHELL_RENDERING_STYLE_ATTR = 'data-dsh-shell-rendering';
+/** Fallback composer seat height for scrollport bottom clearance (px). */
+exports.DEFAULT_COMPOSER_CLEARANCE_PX = 100;
+const ACTIVE_VISUAL_SELECTOR = [
+    'html[data-dsh-skin]',
+    'html[data-dsh-custom-theme]:not([data-dsh-skin])',
+    'html[data-dsh-wallpaper-active]',
+].join(', ');
+const COMPOSER_SEAT_SELECTORS = [
+    '[data-slot="conversation.composer"]',
+    '[data-composer-seat]',
+    '[data-dsh-surface="composer"]',
+];
+/** Build the inert-by-default public rendering corrections. */
+function shellRenderingCss() {
+    const scopes = ACTIVE_VISUAL_SELECTOR.split(', ');
+    const scoped = (selector) => scopes.map(scope => `${scope} ${selector}`).join(',\n');
+    return `
+    /* Viewport lock: prevent outer page scrollbar and viewport
+       displacement during element focus/scrollIntoView. */
+    ${ACTIVE_VISUAL_SELECTOR},
+    ${scoped('body')} {
+      height: 100% !important;
+      width: 100% !important;
+      overflow: hidden !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    ${scoped('[data-slot="sidebar.workspaces"] [class*="_fade"]')} {
+      background: none !important;
+      background-image: none !important;
+    }
+    ${scoped('[data-composer-card] textarea[data-phase]::placeholder')},
+    ${scoped('textarea[data-dsh-part="composer-input"]::placeholder')} {
+      color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-caption)) !important;
+      -webkit-text-fill-color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-caption)) !important;
+      opacity: 1 !important;
+    }
+    ${scoped('[data-phase="active"] [data-slot="conversation.input.dock"] > *')},
+    ${scoped('[data-phase="active"] [data-slot="conversation.composer.dock"] > *')},
+    ${scoped('[data-phase="active"] [data-slot="conversation.composer.dock"] + *')} {
+      /* One skin-driven accessory surface for task and statistics docks. Skins
+         automatically follow their existing semantic theme tokens and may
+         override the --dsh-composer-accessory-* variables for a stronger
+         signature without coupling this adapter to a specific catalog skin.
+
+         The third head covers an accessory that is a SIBLING of the dock slot
+         host rather than a child of it. The slot host is display: contents, so
+         the shell lays its children out as items of the surrounding dock row
+         and the child heads reach them; 0.1.7's context meter was placed beside
+         that host instead of inside it, so it shared the row with the
+         statistics pill but stayed bare (issue #1715) -- one line, two looks.
+         The adjacent-sibling head keeps the row uniform without naming any
+         hashed class or localized label, and covers whatever future accessory
+         the shell seats next to the dock. The plate lands on the accessory's
+         own seat, never on a trigger inside it, so a component's own hover
+         feedback keeps painting on top. */
+      background: var(--dsh-composer-accessory-bg, var(--dsw-specific-tip, var(--dsw-alias-bg-layer-1))) !important;
+      color: var(--dsh-composer-accessory-color, var(--dsw-alias-label-tertiary)) !important;
+      border: var(--dsh-composer-accessory-border, none) !important;
+      border-radius: var(--dsh-composer-accessory-radius, 12px) !important;
+      box-shadow: var(--dsh-composer-accessory-shadow, var(--dsw-shadow-lv1, 0 2px 10px rgba(7, 20, 38, 0.18)));
+      backdrop-filter: blur(var(--dsh-composer-accessory-blur, var(--dsh-input-card-blur, 10px))) !important;
+      -webkit-backdrop-filter: blur(var(--dsh-composer-accessory-blur, var(--dsh-input-card-blur, 10px))) !important;
+    }
+    ${scoped('[data-phase="active"] [data-slot="conversation.composer.dock"] > *')},
+    ${scoped('[data-phase="active"] [data-slot="conversation.composer.dock"] + *')} {
+      /* Same metrics for a dock child and for the sibling seat beside the dock
+         slot host, so the two accessories of one row end up the same height:
+         the plate must not make one of them look like a different control. */
+      margin-top: var(--dsh-composer-accessory-gap, 4px);
+      margin-bottom: var(--dsh-composer-accessory-gap, 4px);
+      padding-top: 2px;
+      padding-bottom: 2px;
+    }
+    ${scoped('[data-slot="conversation.input.dock"] > [data-goal-bar="true"][data-goal-bar="true"][data-goal-bar="true"]')} {
+      /* The host goal dock spans the full composer seat and contains its own
+         centered compact bar. Do not paint the outer dock as an accessory: that
+         creates a viewport-wide veil behind the active-goal chip. The repeated
+         stable marker deliberately raises specificity above catalog-skin dock
+         selectors that load after this shared adapter. */
+      background: transparent !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    ${scoped('[data-phase="active"] [data-slot="conversation.input.dock"] > [data-queue-dock]')} {
+      /* The native queue dock stacks two boxes inside the input dock: a root
+         wrapper that only supplies the shared dock inset, and the panel inside
+         it that paints its own --dsw-specific-tip fill. Painting the wrapper as
+         an accessory adds a second opaque plate one dock inset (8px) wider than
+         the panel on each side, which reads as an extra sheet of paper under
+         the queue (issue #1572). Reset the accessory surface so the panel stays
+         the single layer; the wrapper keeps its inset, so the panel remains
+         aligned with the composer card. */
+      background: transparent !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    ${scoped('[data-conversation-scroll]')},
+    ${scoped('[data-dsh-part="scrollport"]')} {
+      /* The composer is the scrollport's final in-flow child. Reserving physical
+         padding after it lifts the active dock by one composer height and also
+         shifts the hero above center. */
+      padding-bottom: 0 !important;
+    }
+    /* #978 / #1133: Line-level scroll-margin retains scrollIntoView() clearance
+       above the sticky composer without placing a scrollport-level scroll-padding
+       that breaks browser caret-reveal geometry (which caused micro-scrolling on
+       every keystroke while reading history). */
+    ${scoped('[data-conversation-scroll] [data-chat-anchor-key]')},
+    ${scoped('[data-conversation-scroll] [data-chat-flow-kind]')},
+    ${scoped('[data-conversation-scroll] [data-dsh-part="message-row"]')},
+    ${scoped('[data-conversation-scroll] [data-turn-tail]')},
+    ${scoped('[data-conversation-scroll] [class*="_userRow"]')},
+    ${scoped('[data-conversation-scroll] [class*="_compactionRow"]')},
+    ${scoped('[data-conversation-scroll] [class*="_contextRow"]')},
+    ${scoped('[data-conversation-scroll] [class*="_turnErrorRow"]')} {
+      scroll-margin-bottom: var(--dsh-composer-height, ${exports.DEFAULT_COMPOSER_CLEARANCE_PX}px) !important;
+    }
+    /* dsh 0.1.7 turned the right sidebar panel shell into an always-mounted,
+       always-visible positioning box (only its inner dockkit surfaces hide
+       while the panel is closed). Skin rules written for the older shell plate
+       that shell element and, with the panel closed, cover the conversation
+       area with a phantom column. Strip paint from the closed shell whatever
+       the active skin; an open panel ([data-sidebar-right-open]) keeps every
+       skin paint. The attribute predates the layout change, so the rule is a
+       no-op on older shells. */
+    ${scoped('[data-slot="rightbar.session"] > [data-sidebar-right-panel]:not([data-sidebar-right-open])')} {
+      background: none !important;
+      background-color: transparent !important;
+      background-image: none !important;
+      border-color: transparent !important;
+      box-shadow: none !important;
+    }
+    /* #1117: The upstream recommended badge pairs two background-fill tokens
+       as bg + text — in dark mode, skins like Blue Fantasy collapse them to
+       near-identical dark navy values (contrast ~1:1). Override the text
+       color to a readable foreground and tweak the background for contrast.
+       The dark-theme attribute lives on <body>, so it belongs inside the
+       scoped selector: prefixing the already-scoped list produced
+       "body ... html ...", a descendant chain that can never match (#1490). */
+    ${scoped('body[data-ds-dark-theme] [data-question-key] [class*="_badge"]')},
+    ${scoped('body[data-ds-dark-theme] [data-question-scroll] [class*="_badge"]')} {
+      color: var(--dsw-alias-label-primary, #ffffff) !important;
+      background: var(--dsw-alias-interactive-bg-active, color-mix(in srgb, var(--dsw-alias-button-info-fill, #4a5fa8) 50%, transparent)) !important;
+    }
+  `;
+}
+/** Install the shared corrections and return their idempotent teardown. */
+function installShellRenderingAdapter(doc) {
+    if (doc.head === null)
+        return () => { };
+    const existing = doc.head.querySelector(`style[${exports.SHELL_RENDERING_STYLE_ATTR}]`);
+    if (existing !== null)
+        return () => { };
+    const style = doc.createElement('style');
+    style.setAttribute(exports.SHELL_RENDERING_STYLE_ATTR, '');
+    style.textContent = shellRenderingCss();
+    doc.head.appendChild(style);
+    const win = doc.defaultView;
+    try {
+        win?.scrollTo?.(0, 0);
+    }
+    catch { }
+    const composerSelector = COMPOSER_SEAT_SELECTORS.join(', ');
+    let resizeObserver = null;
+    let mutationObserver = null;
+    let observedComposer = null;
+    let appliedHeight = '';
+    let scheduledFrame = null;
+    let disposed = false;
+    // The shell mounts one composer seat per conversation; keep the resolved
+    // element while it stays connected instead of re-querying the body for every
+    // mutation batch (issue #954 follow-up: streaming produced many queries/s).
+    const resolveComposer = () => {
+        if (observedComposer !== null && observedComposer.isConnected)
+            return observedComposer;
+        return doc.body === null ? null : doc.body.querySelector(composerSelector);
+    };
+    const syncHeight = () => {
+        if (doc.body === null)
+            return;
+        const composer = resolveComposer();
+        if (composer === null)
+            return;
+        if (observedComposer !== composer) {
+            if (observedComposer !== null && resizeObserver !== null) {
+                resizeObserver.unobserve(observedComposer);
+            }
+            observedComposer = composer;
+            if (resizeObserver !== null) {
+                resizeObserver.observe(composer);
+            }
+        }
+        const rect = composer.getBoundingClientRect();
+        if (rect.height <= 0)
+            return;
+        const root = doc.documentElement;
+        const next = `${Math.ceil(rect.height)}px`;
+        // Skip the custom-property write (and its forced style invalidation) while
+        // the measured height still matches what is already applied.
+        if (next === appliedHeight || root === null)
+            return;
+        appliedHeight = next;
+        root.style.setProperty('--dsh-composer-height', next);
+    };
+    // Coalesce mutation bursts into at most one measure/write per frame; the
+    // disposer cancels whatever is still scheduled.
+    const scheduleSync = () => {
+        if (scheduledFrame !== null || disposed)
+            return;
+        if (win === null || typeof win.requestAnimationFrame !== 'function') {
+            syncHeight();
+            return;
+        }
+        scheduledFrame = win.requestAnimationFrame(() => {
+            scheduledFrame = null;
+            if (disposed)
+                return;
+            syncHeight();
+        });
+    };
+    if (win !== null && typeof win.ResizeObserver === 'function') {
+        resizeObserver = new win.ResizeObserver(() => syncHeight());
+    }
+    if (win !== null && typeof win.MutationObserver === 'function' && doc.body !== null) {
+        mutationObserver = new win.MutationObserver(() => scheduleSync());
+        mutationObserver.observe(doc.body, { childList: true, subtree: true });
+    }
+    syncHeight();
+    return () => {
+        if (disposed)
+            return;
+        disposed = true;
+        if (scheduledFrame !== null) {
+            if (win !== null && typeof win.cancelAnimationFrame === 'function')
+                win.cancelAnimationFrame(scheduledFrame);
+            scheduledFrame = null;
+        }
+        if (resizeObserver !== null) {
+            resizeObserver.disconnect();
+            resizeObserver = null;
+        }
+        if (mutationObserver !== null) {
+            mutationObserver.disconnect();
+            mutationObserver = null;
+        }
+        observedComposer = null;
+        appliedHeight = '';
+        doc.documentElement?.style.removeProperty('--dsh-composer-height');
+        style.remove();
+    };
+}
+
+  },
+  "src/client/skin-engine/semantic-adapter.ts": function (module, exports, require) {
+"use strict";
+/**
+ * Semantic adapter (issue #506, contract section 6, L2 compat adapter).
+ *
+ * One merged MutationObserver that stamps the semantic-attribute enumeration
+ * (contracts/semantic-attrs-v1.md) onto the official shell DOM and onto
+ * plugin roots that already expose stable anchors. This is explicitly a
+ * COMPAT adapter — not a permanent public contract:
+ *  - official areas migrate to first-party attributes when the upstream
+ *    theme seam lands (then these rules are re-evaluated for deletion);
+ *  - third-party plugin areas stay here long-term (plugins that opt in
+ *    output the attributes themselves and the adapter becomes a no-op).
+ *
+ * Properties:
+ *  - merged: a single observer handles every rule;
+ *  - idempotent: re-tagging an already-correct element is a no-op, so React
+ *    re-renders simply get re-stamped when their nodes are re-added;
+ *  - fail-closed diagnostics: rules that match nothing and selectors the
+ *    engine rejects are reported, never thrown into the page;
+ *  - the adapter never REMOVES attributes it did not set; disposal only
+ *    disconnects the observer (stamping is cosmetic and scopes itself under
+ *    html[data-dsh-skin] consumers).
+ * @module @linxin666/dsh-client-ui-skin-center/runtime/semantic-adapter
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SEMANTIC_RULES_V1 = void 0;
+exports.createSemanticAdapter = createSemanticAdapter;
+/**
+ * The v1 rule table. Single ownership: only the skin-center edits this.
+ * Anchors verified against @deepseek-ai rc.7 (see docs/archive survey).
+ */
+exports.SEMANTIC_RULES_V1 = [
+    // ---- surfaces (official shell) ----
+    { selector: '[data-slot="root"]', attrs: [['data-dsh-surface', 'root']], note: 'ui-renderer root outlet' },
+    { selector: '[data-slot="sidebar"]', attrs: [['data-dsh-surface', 'sidebar']], note: 'layout sidebar outlet' },
+    {
+        selector: '[data-slot="conversation"], [class*="centerCol"]',
+        attrs: [['data-dsh-surface', 'conversation']],
+        note: 'conversation column: legacy conversation outlet; since dsh 0.1.7 the column carries no data hook, so the css-module suffix (hash prefix varies, suffix stable) is the anchor',
+    },
+    { selector: '[data-slot="conversation.session.header"]', attrs: [['data-dsh-surface', 'session-header']], note: 'conversation header outlet' },
+    { selector: '[data-slot="conversation.composer"]', attrs: [['data-dsh-surface', 'composer']], note: 'composer chain outlet' },
+    {
+        selector: '[data-slot="details"], [data-rightbar-col]',
+        attrs: [['data-dsh-surface', 'details']],
+        note: 'details column: legacy details outlet; since dsh 0.1.7 the right sidebar column carries the official data-rightbar-col hook (0-width while collapsed, so stamping it paints nothing when closed)',
+    },
+    { selector: '[data-shell-overlay]', attrs: [['data-dsh-surface', 'overlay']], note: 'frame overlay attribute' },
+    { selector: '[data-slot="shell.overlay"]', attrs: [['data-dsh-surface', 'overlay']], note: 'shell overlay outlet' },
+    {
+        selector: '[role="dialog"]:has([data-slot="settings.section"])',
+        attrs: [['data-dsh-surface', 'settings']],
+        note: 'settings dialog (composite: dialog containing the section outlet)',
+    },
+    // ---- shell parts ----
+    { selector: '[data-chat-flow-kind]', attrs: [['data-dsh-part', 'message-row']], note: 'chat flow item' },
+    { selector: '[data-streaming]', attrs: [['data-dsh-part', 'message-body']], note: 'assistant markdown root' },
+    { selector: '[data-conversation-scroll]', attrs: [['data-dsh-part', 'scrollport']], note: 'conversation scrollport' },
+    {
+        selector: 'textarea[data-phase], [data-composer-input]',
+        attrs: [['data-dsh-part', 'composer-input']],
+        note: 'composer input: legacy textarea; current shells render a Lexical contenteditable carrying data-composer-input',
+    },
+    { selector: '[data-decoration="chip"]', attrs: [['data-dsh-part', 'composer-chip']], note: 'composer reference chip' },
+    { selector: '[data-queue-dock]', attrs: [['data-dsh-part', 'queue-dock']], note: 'queued turns dock' },
+    { selector: '[data-turn-tail]', attrs: [['data-dsh-part', 'turn-tail']], note: 'turn tail row' },
+    { selector: '[data-side]', attrs: [['data-dsh-part', 'resize-handle']], note: 'column resize handle' },
+    {
+        selector: 'button[class*="newSession"]',
+        attrs: [['data-dsh-part', 'new-session']],
+        note: 'sidebar new-session action (compat seam shields skins from localized labels)',
+    },
+    // ---- plugin roots (plugins without stable anchors opt in via AGENTS.md) ----
+    {
+        selector: '[data-dsh-taskboard-view], [data-dsh-taskboard-board]',
+        attrs: [['data-dsh-plugin', 'task-board']],
+        note: 'task-board panel/board (the sidebar row is shell-owned: its glyph carries data-dsh-panel-entry and the family rule below stamps the row)',
+    },
+    {
+        selector: '[data-dsh-ssh-view]',
+        attrs: [['data-dsh-plugin', 'ssh']],
+        note: 'ssh panel (the sidebar row is shell-owned: its glyph carries data-dsh-panel-entry and the family rule below stamps the row)',
+    },
+    {
+        selector: '[data-gitgraph-chip-anchor], [data-gitgraph-dialog]',
+        attrs: [['data-dsh-plugin', 'git-graph']],
+        note: 'git-graph chip/dialog',
+    },
+    {
+        selector: '[data-dsh-pet-root]',
+        attrs: [['data-dsh-plugin', 'pet']],
+        note: 'pet global root',
+    },
+    // ---- family parts ----
+    {
+        selector: '[class*="panelRow"]:has([data-dsh-panel-entry])',
+        attrs: [['data-dsh-part', 'sidebar-entry']],
+        note: 'a plugin-registered sidebar row (sidebar.panellist): the shell owns the row box and stamps no hook of its own, so the row is recognised by its css-module class plus the glyph identity the registering plugin outputs — same compat technique as newSession',
+    },
+];
+/**
+ * The anchors the rule table keys on, as one attribute filter for the
+ * observer: a glyph or row anchor that is SET on an element already in the
+ * tree must re-anchor its ancestors exactly like a newly inserted one.
+ */
+const ANCHOR_ATTRIBUTES = [
+    'data-dsh-panel-entry',
+    'data-dsh-surface',
+    'data-dsh-part',
+    'data-dsh-plugin',
+    'data-slot',
+    'data-chat-flow-kind',
+    'data-conversation-scroll',
+    'data-turn-tail',
+    'data-composer-input',
+    'data-queue-dock',
+    'data-rightbar-col',
+    'data-shell-overlay',
+    'data-dsh-taskboard-view',
+    'data-dsh-taskboard-board',
+    'data-dsh-ssh-view',
+    'data-dsh-pet-root',
+    'data-gitgraph-chip-anchor',
+    'data-gitgraph-dialog',
+    'data-decoration',
+    'data-streaming',
+    'data-side',
+    'data-phase',
+];
+// 'class' is deliberately absent: React sets className when it creates the
+// element, so a row whose class matters already carries it when the childList
+// record arrives, and class toggles are by far the most frequent attribute
+// traffic on the page. The filter stays on identity anchors.
+/**
+ * Safety bound of the ancestor walk, NOT a depth ceiling.
+ *
+ * The walk's normal terminator is the observed root: every node the observer
+ * can report is inside document.body, so the walk returns there (measured —
+ * with this bound removed the walk still stops at body on every delivery).
+ * This constant only fires for a change inside a subtree that is not connected
+ * to the observed root at all, where there is no ancestor to anchor yet and
+ * the node's own childList delivery stamps it once it IS attached.
+ *
+ * It is deliberately far above any real markup depth (the shell's own sidebar
+ * row is three hops deep) instead of a small number that would silently leave
+ * a deeper row unanchored — which is the very defect this walk exists to fix
+ * (issue #1732). A measured sweep anchors through 23 wrapper levels and misses
+ * from 24, i.e. only past the point where the tree is pathological.
+ */
+const ANCESTOR_HOPS = 24;
+function createSemanticAdapter(doc) {
+    const rules = exports.SEMANTIC_RULES_V1.map((rule) => ({ rule, usable: true, matchedInPass: 0 }));
+    let observer = null;
+    let stamped = 0;
+    let running = false;
+    const applyRule = (live, el) => {
+        if (!live.usable)
+            return;
+        let hit = false;
+        try {
+            hit = el.matches(live.rule.selector);
+        }
+        catch {
+            live.usable = false;
+            return;
+        }
+        if (!hit)
+            return;
+        live.matchedInPass += 1;
+        for (const [name, value] of live.rule.attrs) {
+            if (el.getAttribute(name) !== value) {
+                el.setAttribute(name, value);
+                stamped += 1;
+            }
+        }
+    };
+    const applyToTree = (rootEl) => {
+        for (const live of rules) {
+            if (!live.usable)
+                continue;
+            applyRule(live, rootEl);
+            let matches = [];
+            try {
+                matches = Array.from(rootEl.querySelectorAll(live.rule.selector));
+            }
+            catch {
+                live.usable = false;
+                continue;
+            }
+            for (const el of matches)
+                applyRule(live, el);
+        }
+    };
+    const fullPass = () => {
+        for (const live of rules)
+            live.matchedInPass = 0;
+        if (doc.documentElement)
+            applyToTree(doc.documentElement);
+    };
+    /**
+     * Re-anchor one changed node and its ancestor chain.
+     *
+     * applyToTree only walks DOWNWARD: a rule whose selector matches an ancestor
+     * of the changed node (the panel-list row is recognised by the glyph INSIDE
+     * it) is never re-evaluated when that descendant arrives. React mounts the
+     * row first and the registering plugin's glyph a tick later, so without this
+     * the row keeps no anchor at all until something forces a full pass
+     * (issue #1732). The walk is bounded and stops at the document root.
+     */
+    const reanchorAround = (node) => {
+        const root = doc.body ?? doc.documentElement;
+        let current = node;
+        for (let hop = 0; current !== null && hop <= ANCESTOR_HOPS; hop += 1) {
+            for (const live of rules) {
+                if (live.usable)
+                    applyRule(live, current);
+            }
+            // Stop at the observed root: going further cannot reach a node the
+            // observer is even watching, and body is the ceiling it was given.
+            if (current === root || current === doc.documentElement)
+                return;
+            current = current.parentElement;
+        }
+    };
+    return {
+        get running() {
+            return running;
+        },
+        start() {
+            if (running)
+                return;
+            running = true;
+            fullPass();
+            observer = new doc.defaultView.MutationObserver((records) => {
+                try {
+                    for (const record of records) {
+                        for (const node of Array.from(record.addedNodes)) {
+                            if (node.nodeType !== 1)
+                                continue;
+                            const el = node;
+                            applyToTree(el);
+                            // The added subtree may itself be the glyph a row wants; the row
+                            // is an ANCESTOR of it and applyToTree never looks up (#1732).
+                            reanchorAround(el.parentElement ?? el);
+                        }
+                        // A glyph whose ANCHOR is set on an element already in the tree
+                        // (a re-render that flips the attribute instead of replacing the
+                        // node) is the same signal, and childList alone never sees it.
+                        const target = record.target.nodeType === 1 ? record.target : null;
+                        if (target !== null && record.type === 'attributes')
+                            reanchorAround(target);
+                    }
+                }
+                catch {
+                    // Fail-closed: a tagging error must never break the host page.
+                }
+            });
+            observer.observe(doc.body ?? doc.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: [...ANCHOR_ATTRIBUTES],
+            });
+        },
+        stop() {
+            running = false;
+            observer?.disconnect();
+            observer = null;
+        },
+        diagnostics() {
+            return {
+                invalidRules: rules.filter((r) => !r.usable).map((r) => r.rule.selector),
+                unmatchedRules: rules.filter((r) => r.usable && r.matchedInPass === 0).map((r) => r.rule.selector),
+                stamped,
+            };
+        },
+    };
+}
+
+  },
+  "src/client/skin-engine/effect-ledger.ts": function (module, exports, require) {
+"use strict";
+/**
+ * Effect ledger (issue #506, contract section 6).
+ *
+ * Every runtime effect a skin activation creates — style tags, CSS variable
+ * overrides, decoration-layer content, listeners, hook cleanups — is recorded
+ * here as an append-only entry bound to its activation identity. Switching
+ * skins releases the old activation's entries in reverse order; disposal is
+ * idempotent and may run 0, 1 or N times.
+ *
+ * lifecycleScope split:
+ *  - "activation": everything injectable — released on every skin switch;
+ *  - "component": skin static assets and the user's selection — survive
+ *    switches, reloads and HMR. The ledger only tracks activation scope.
+ *
+ * Pure logic, no DOM types required (entries are opaque teardown closures).
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createEffectLedger = createEffectLedger;
+function createEffectLedger(now = () => Date.now()) {
+    let seq = 0;
+    let nextActivation = 1;
+    const log = [];
+    const live = new Map();
+    const disposed = new Set();
+    function push(activationId, kind, label, replacesSeq) {
+        seq += 1;
+        log.push({ seq, activationId, kind, label, replacesSeq, at: now() });
+        return seq;
+    }
+    function release(effect, activationId) {
+        if (effect.released)
+            return;
+        effect.released = true;
+        push(activationId, 'release', effect.label);
+        try {
+            effect.teardown();
+        }
+        catch {
+            // A failing teardown must never block the remaining cleanup; the
+            // failure itself is a ledger fact for diagnostics.
+            push(activationId, 'cleanup-failed', effect.label);
+        }
+    }
+    return {
+        beginActivation() {
+            const id = nextActivation++;
+            live.set(id, []);
+            push(id, 'create', 'activation');
+            return id;
+        },
+        record(activationId, label, teardown) {
+            const bucket = live.get(activationId);
+            if (!bucket || disposed.has(activationId)) {
+                throw new Error(`effect "${label}" recorded on disposed/unknown activation ${activationId}`);
+            }
+            const entrySeq = push(activationId, 'create', label);
+            bucket.push({ seq: entrySeq, label, teardown, released: false });
+            return entrySeq;
+        },
+        replace(activationId, label, previousSeq, teardown) {
+            const bucket = live.get(activationId);
+            if (!bucket || disposed.has(activationId)) {
+                throw new Error(`effect "${label}" replaced on disposed/unknown activation ${activationId}`);
+            }
+            if (previousSeq !== undefined) {
+                const previous = bucket.find((e) => e.seq === previousSeq);
+                if (previous)
+                    release(previous, activationId);
+            }
+            const entrySeq = push(activationId, 'replace', label, previousSeq);
+            bucket.push({ seq: entrySeq, label, teardown, released: false });
+            return entrySeq;
+        },
+        disposeActivation(activationId) {
+            if (disposed.has(activationId))
+                return;
+            disposed.add(activationId);
+            const bucket = live.get(activationId) ?? [];
+            for (const effect of [...bucket].reverse())
+                release(effect, activationId);
+        },
+        isDisposed(activationId) {
+            return disposed.has(activationId);
+        },
+        entries() {
+            return log;
+        },
+    };
 }
 
   },

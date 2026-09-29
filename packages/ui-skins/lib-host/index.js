@@ -2,6 +2,7 @@ import { Config } from './config.js';
 import { UiSkins } from './service.js';
 import { installHttpRoutes } from './http-routes.js';
 import { adaptExternalPack, adaptExternalSource, findNodeModules, scanNodeModulesSkins, scanSkinUnits, } from './external.js';
+import { installEngineAdaptation } from './skin-engine/external-v2.js';
 export const name = 'ui-skins';
 /** cordis 严格依赖声明：本插件直接触碰的服务必须在此声明（未声明访问会抛错）。 */
 export const inject = ['storageDomain', 'webServer'];
@@ -15,12 +16,17 @@ export function apply(ctx, config) {
     // 外部 web-ui 皮肤单元（外部包集成器）：市场源 / 本地单元统一适配为 pack。
     // 适配器只读外部单元的数据（skin.json/CSS/预览图），不执行外部代码；市场拉取为异步。
     const external = [];
+    const units = [];
     const seenRoots = new Set();
     const seenIds = new Set();
     const baseDirs = [new URL('.', import.meta.url).pathname, process.cwd()];
     const register = (adapted) => {
         if (!adapted.ok || seenIds.has(adapted.pack.id))
             return;
+        // 引擎收编（A 路线）：安全管线通过者交给官方 skin-controller 渲染；
+        // 被拒者保留旧适配路径（pack 自带 CSS/bodyAttr/hooks）。
+        for (const unit of installEngineAdaptation([adapted]))
+            units.push(unit);
         seenIds.add(adapted.pack.id);
         seenRoots.add(adapted.root);
         external.push(adapted);
@@ -61,7 +67,7 @@ export function apply(ctx, config) {
             ctx.effect(() => () => clearInterval(timer), 'ui-skins: external rescan');
         }
     })();
-    installHttpRoutes(ctx, service, external); // /ui-skins/* 路由 + SSE + 外部单元
+    installHttpRoutes(ctx, service, external, units); // /ui-skins/* 路由 + SSE + 外部单元 + 引擎 v2 面
     // 可选能力：独立子插件 + 显式注入——workspaceRegistry 缺席时保持 pending，不影响主链路。
     ctx.plugin({
         name: 'ui-skins-workspace',

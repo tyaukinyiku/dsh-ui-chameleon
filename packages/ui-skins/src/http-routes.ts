@@ -19,6 +19,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { BindingLevel, UiLayerConfig, UiTarget } from './types.ts'
 import type { UiSkins } from './service.ts'
 import type { ExternalPackAdapted } from './external.ts'
+import type { EngineUnit } from './skin-engine/external-v2.ts'
+import { handleExternalV2 } from './skin-engine/external-v2.ts'
 import { readFileSync } from 'node:fs'
 import { extname } from 'node:path'
 
@@ -33,7 +35,12 @@ interface WebServerLike {
 }
 
 /** 由 index.apply 以显式 service 实例调用（避免未声明的 ctx 属性访问）。 */
-export function installHttpRoutes(ctx: Context, service: UiSkins, external: ExternalPackAdapted[] = []): void {
+export function installHttpRoutes(
+  ctx: Context,
+  service: UiSkins,
+  external: ExternalPackAdapted[] = [],
+  units: EngineUnit[] = [],
+): void {
   const webServer = (ctx as unknown as { webServer?: WebServerLike }).webServer
   if (!webServer?.register) throw new Error('ui-skins: ctx.webServer 不可用')
   ctx.effect(
@@ -42,7 +49,7 @@ export function installHttpRoutes(ctx: Context, service: UiSkins, external: Exte
         kind: 'prefix',
         path: UI_SKINS_ROUTE_BASE,
         handler: (req, res) => {
-          void handle(service, external, req, res).catch((error: unknown) => {
+          void handle(service, external, units, req, res).catch((error: unknown) => {
             sendJson(res, 500, { error: String(error) })
           })
         },
@@ -65,9 +72,20 @@ function sendFile(res: ServerResponse, abs: string): void {
   res.end(readFileSync(abs))
 }
 
-async function handle(service: UiSkins, external: ExternalPackAdapted[], req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(
+  service: UiSkins,
+  external: ExternalPackAdapted[],
+  units: EngineUnit[],
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://ui-skins.invalid')
   const path = url.pathname.slice(UI_SKINS_ROUTE_BASE.length)
+  // 引擎 v2 传输面（catalog / stylesheet / patches / hooks / 资产）
+  if (path === '/external/v2' || path.startsWith('/external/v2/')) {
+    const sub = path.slice('/external/v2'.length) || '/'
+    if (await handleExternalV2(sub, req, res, units)) return
+  }
   const method = req.method ?? 'GET'
 
   if (method === 'GET' && path === '/state') {

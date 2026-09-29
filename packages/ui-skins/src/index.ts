@@ -21,6 +21,7 @@ import {
   scanSkinUnits,
   type ExternalPackAdapted,
 } from './external.ts'
+import { installEngineAdaptation, type EngineUnit } from './skin-engine/external-v2.ts'
 
 export const name = 'ui-skins'
 
@@ -39,11 +40,15 @@ export function apply(ctx: Context, config: UiSkinsConfig): void {
   // 外部 web-ui 皮肤单元（外部包集成器）：市场源 / 本地单元统一适配为 pack。
   // 适配器只读外部单元的数据（skin.json/CSS/预览图），不执行外部代码；市场拉取为异步。
   const external: ExternalPackAdapted[] = []
+  const units: EngineUnit[] = []
   const seenRoots = new Set<string>()
   const seenIds = new Set<string>()
   const baseDirs = [new URL('.', import.meta.url).pathname, process.cwd()]
   const register = (adapted: ExternalPackAdapted): void => {
     if (!adapted.ok || seenIds.has(adapted.pack.id)) return
+    // 引擎收编（A 路线）：安全管线通过者交给官方 skin-controller 渲染；
+    // 被拒者保留旧适配路径（pack 自带 CSS/bodyAttr/hooks）。
+    for (const unit of installEngineAdaptation([adapted])) units.push(unit)
     seenIds.add(adapted.pack.id)
     seenRoots.add(adapted.root)
     external.push(adapted)
@@ -78,7 +83,7 @@ export function apply(ctx: Context, config: UiSkinsConfig): void {
     }
   })()
 
-  installHttpRoutes(ctx, service, external) // /ui-skins/* 路由 + SSE + 外部单元
+  installHttpRoutes(ctx, service, external, units) // /ui-skins/* 路由 + SSE + 外部单元 + 引擎 v2 面
 
   // 可选能力：独立子插件 + 显式注入——workspaceRegistry 缺席时保持 pending，不影响主链路。
   ctx.plugin({

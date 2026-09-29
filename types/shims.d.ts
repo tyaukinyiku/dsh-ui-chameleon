@@ -15,11 +15,19 @@
 
 declare const process: { cwd(): string; env: Record<string, string | undefined> }
 
-declare function fetch(url: string): Promise<{
+declare function fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<{
   ok: boolean
   status: number
+  statusText: string
   text(): Promise<string>
+  json(): Promise<unknown>
+  arrayBuffer(): Promise<ArrayBuffer>
 }>
+
+/** host 侧二进制拼接（node 运行时自带；仅覆盖本仓库用到的子集）。 */
+declare const Buffer: {
+  from(data: string | ArrayBufferView | ArrayBuffer): Uint8Array
+}
 
 declare module '@deepseek-ai/cordis' {
   export interface Context {
@@ -165,4 +173,10 @@ declare module 'node:path' {
   export function extname(path: string): string
   export function resolve(...parts: string[]): string
   export const sep: string
+}
+
+declare module 'node:crypto' {
+  export function createHash(algorithm: string): {
+    update(data: string | Uint8Array): { digest(encoding: 'hex'): string }
+  }
 }

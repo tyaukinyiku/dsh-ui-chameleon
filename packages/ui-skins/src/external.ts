@@ -21,6 +21,22 @@ export interface ExternalPackAdapted {
   ok: boolean
   /** 官方 hooks 契约模块文本（动态装饰/美术层），由传输面 /external/<id>/hooks 提供。 */
   hooks?: string
+  /** 原始资产文本（引擎渲染管线输入；未做 :root/绝对化改写，url() 保持单元内相对）。 */
+  raw?: ExternalRawAssets
+}
+
+/** 引擎管线输入：原始样式文本 + 清单元元数据（本地目录或市场拉取留存）。 */
+export interface ExternalRawAssets {
+  /** 主样式表文本（skin.css / stylesheet / 提取 CSS）。 */
+  stylesheet: string
+  /** L3 补丁文本（patches.css / patches），可缺省。 */
+  patches?: string
+  /** skin.json 原始清单（市场源缺省时外部合成）。 */
+  manifest?: Record<string, unknown>
+  /** 远程资产映射（市场源）：rel -> 绝对 URL；本地单元为空。 */
+  remoteAssets: Map<string, string>
+  /** 市场源标记（hooks 信任判定：官方市场通道即受信）。 */
+  market?: boolean
 }
 
 export const EXTERNAL_ROUTE_PREFIX = '/ui-skins/external'
@@ -198,7 +214,7 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
     title: typeof skin.name === 'string' && skin.name ? skin.name : skinId,
     description: [skin.tagline, skin.description]
       .filter((v): v is string => typeof v === 'string' && !!v)
-      .join(' '),
+      .join(' ') || `外部皮肤 ${skinId}（${entry.source}）`,
   }
   if (typeof skin.accent === 'string' && skin.accent) {
     pack.baseTokens = { '--ui-accent': skin.accent }
@@ -238,10 +254,19 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
   const v2Alt = [join(root, 'skin.css'), join(root, 'patches.css')]
   if (existsSync(v2Style) || existsSync(v2Patches) || existsSync(v2Alt[0])) {
     const parts: string[] = []
-    for (const f of [v2Style, v2Patches, ...v2Alt]) {
+    const rawStyleParts: string[] = []
+    const rawPatchParts: string[] = []
+    for (const f of [v2Style, v2Alt[0]]) {
       if (!existsSync(f)) continue
       const text = readFileSync(f, 'utf8')
+      rawStyleParts.push(text)
       // 与市场源一致：:root 锚定到 pack 激活属性赢下官方 token 层叠
+      parts.push(rewriteCssUrls(text.replaceAll(':root', `html[data-ui-pack="${id}"]`), `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`))
+    }
+    for (const f of [v2Patches, v2Alt[1]]) {
+      if (!existsSync(f)) continue
+      const text = readFileSync(f, 'utf8')
+      rawPatchParts.push(text)
       parts.push(rewriteCssUrls(text.replaceAll(':root', `html[data-ui-pack="${id}"]`), `${EXTERNAL_ROUTE_PREFIX}/${id}/asset`))
     }
     if (parts.length > 0) {
@@ -265,7 +290,20 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
       const hooks = existsSync(hooksFile) ? readFileSync(hooksFile, 'utf8') : undefined
       const bg = backgroundMediaCss(root, id, contributes.backgroundMedia, assets, warnings)
       if (bg) pack.baseCss = `${pack.baseCss ?? ''}\n${bg}`
-      return { pack, root, assets, warnings, ok: true, hooks }
+      return {
+        pack,
+        root,
+        assets,
+        warnings,
+        ok: true,
+        hooks,
+        raw: {
+          stylesheet: rawStyleParts.join('\n'),
+          patches: rawPatchParts.length > 0 ? rawPatchParts.join('\n') : undefined,
+          manifest: skin,
+          remoteAssets: new Map(),
+        },
+      }
     }
   }
 
@@ -318,7 +356,18 @@ export function adaptExternalPack(root: string, entry: ExternalPackEntry): Exter
   }
   const bg = backgroundMediaCss(root, id, contributes.backgroundMedia, assets, warnings)
   if (bg) pack.baseCss = `${pack.baseCss ?? ''}\n${bg}`
-  return { pack, root, assets, warnings, ok: true }
+  return {
+    pack,
+    root,
+    assets,
+    warnings,
+    ok: true,
+    raw: {
+      stylesheet: cssText,
+      manifest: skin,
+      remoteAssets: new Map(),
+    },
+  }
 }
 
 
@@ -361,8 +410,9 @@ export async function adaptMarketSkin(skinId: string, entry: ExternalPackEntry):
   const id = entry.id || `ext-${skinId}`
   const assetBase = `${MARKET_ASSET_BASE}/${encodeURIComponent(skinId)}`
   const cssParts: string[] = []
+  const rawParts: Array<{ kind: 'stylesheet' | 'patches'; text: string }> = []
   let cssOrigin: 'market' | 'none' = 'none'
-  for (const asset of ['stylesheet', 'patches']) {
+  for (const asset of ['stylesheet', 'patches'] as const) {
     try {
       const res = await fetch(`${assetBase}/${asset}`)
       if (!res.ok) {
@@ -371,6 +421,7 @@ export async function adaptMarketSkin(skinId: string, entry: ExternalPackEntry):
       }
       const text = await res.text()
       if (text.trim()) {
+        rawParts.push({ kind: asset, text })
         // `:root`(0,1,0) 会被 dsh 官方同名 token 的后注入定义压过——市场皮肤多为
         // 官方 token 重映射，必须以更高特异度(0,1,1)锚定在 pack 激活属性上才能赢下层叠。
         const scoped = text.replaceAll(':root', `html[data-ui-pack="${id}"]`)
@@ -401,7 +452,21 @@ export async function adaptMarketSkin(skinId: string, entry: ExternalPackEntry):
   }
   if (cssParts.length > 0) pack.baseCss = cssParts.join('\n')
   pack.external = { kind: 'external-skin', source: entry.source, originalId: skinId, cssOrigin }
-  return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true, hooks }
+  // 引擎管线原始文本（url() 保持相对；远程资产按需代理）。
+  const rawAssets: ExternalRawAssets = {
+    stylesheet: rawParts.filter((p) => p.kind === 'stylesheet').map((p) => p.text).join('\n'),
+    manifest: {
+      id: skinId,
+      name: entry.title || skinId,
+      contributes: { stylesheet: 'stylesheet' },
+    },
+    remoteAssets: new Map(),
+    market: true,
+  }
+  if (rawParts.some((p) => p.kind === 'patches')) {
+    rawAssets.patches = rawParts.filter((p) => p.kind === 'patches').map((p) => p.text).join('\n')
+  }
+  return { pack, root: `market:${skinId}`, assets: new Map(), warnings, ok: true, hooks, raw: rawAssets }
 }
 
 /** 顶层调度器：市场源 / 本地单元（包名或路径）统一入口。 */

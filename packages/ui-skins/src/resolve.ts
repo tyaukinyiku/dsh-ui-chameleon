@@ -357,6 +357,7 @@ export function resolveUi(input: ResolveInput): UiSpec {
     packId: pack?.id ?? null,
     bodyAttr: pack?.bodyAttr ?? null,
     hooks: pack?.hooksUrl ? { url: pack.hooksUrl, assetBase: pack.assetBase ?? '' } : null,
+    externalSkinId: pack?.external?.engineManaged ? pack.external.originalId : null,
     themeId,
     layoutId,
     tokens,

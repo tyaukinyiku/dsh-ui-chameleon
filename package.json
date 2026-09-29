@@ -47,6 +47,7 @@
     "build": "node scripts/build-host.mjs --all && node scripts/build-client.mjs --all"
   },
   "dependencies": {
+    "lightningcss": "^1.33.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
